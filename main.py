@@ -1,7 +1,7 @@
 import numpy as np
 
 class Zero:
-    def get(self):
+    def get():
         return 0
 
 class Desk:
@@ -12,14 +12,16 @@ class Desk:
         return self.desk
 
     def print_desk(self):
-        for_print = [[]]
-        for i in range(self.get.shape[0]):
-            for j in range(self.get.shape[1]):
-                for_print[i].append(self.get[i, j])
-            for_print.append([])
-            print(for_print[i])
-desk = Desk
-desk.print_desk(desk)
+        desk_array = self.get()
+        for i in range(desk_array.shape[0]):
+            row = []
+            for j in range(desk_array.shape[1]):
+                row.append(desk_array[i, j].get())
+            print(row)
+
+
+desk = Desk()
+desk.print_desk()
 
 class Plant:
     def __init__(self):
