@@ -1,5 +1,4 @@
 import numpy as np
-import pygame as pg
 
 desk = np.zeros((10, 10), dtype=int)
 
@@ -8,25 +7,34 @@ class Plant:
         list_of_components = []
 
 class Component:
-    pass
+    def __init__(self):
+        self.num = 0
+
+    def get(self):
+        return self.num
 
 
 class Green(Component):
     def __init__(self):
-        pass
+        super().__init__()
+        self.num = 1
 
 class Red(Component):
     def __init__(self):
-        pass
+        super().__init__()
+        self.num = 2
 
 class Yellow(Component):
     def __init__(self):
-        pass
+        super().__init__()
+        self.num = 3
 
 class White(Component):
     def __init__(self):
-        pass
+        super().__init__()
+        self.num = 4
 
 class Blue(Component):
     def __init__(self):
-        pass
+        super().__init__()
+        self.num = 5
