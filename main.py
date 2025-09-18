@@ -1,6 +1,27 @@
 import numpy as np
 
-desk = np.zeros((10, 10), dtype=int)
+class Zero:
+    def get():
+        return 0
+
+class Desk:
+    def __init__(self):
+        self.desk = np.full((10, 10), Zero)
+
+    def get(self):
+        return self.desk
+
+    def print_desk(self):
+        desk_array = self.get()
+        for i in range(desk_array.shape[0]):
+            row = []
+            for j in range(desk_array.shape[1]):
+                row.append(desk_array[i, j].get())
+            print(row)
+
+
+desk = Desk()
+desk.print_desk()
 
 class Plant:
     def __init__(self):
@@ -49,3 +70,4 @@ class Blue(Component):
     def __init__(self):
         super().__init__()
         self.num = 5
+
