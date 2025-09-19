@@ -1,4 +1,5 @@
 import numpy as np
+import time
 
 X, Y = (20, 20)
 
@@ -11,13 +12,9 @@ class Desk:
         self.desk = np.full((X, Y), Zero)
         self.plants = []
 
-    def get(self):
-        """Возвращает поле """
-        return self.desk
-
     def print_desk(self):
         """печатает всю доску"""
-        desk_array = self.get()
+        desk_array = self.desk
         for i in range(desk_array.shape[0]):
             row = []
             for j in range(desk_array.shape[1]):
@@ -31,7 +28,7 @@ class Desk:
         """создаёт новый объект на поле с координатами X и Y."""
         self.desk[x, y] = obj
         self.plants.append(Plant(obj))
-        print("растение добавлено")
+        log("растение добавлено")
 
 
     def make_random_desk(self, count=10):
@@ -47,6 +44,7 @@ class Desk:
                     self.create(i, j, obj)
                     placed += 1
                 if placed >= count:
+                    log("поле сгенерировано")
                     return
 
 class Plant:
@@ -62,6 +60,7 @@ class Component:
         """обозначение в матрице"""
         self.coordinates = ()
         """координаты нахождения в поле. (X, Y)"""
+        self.energy = 100
 
     def get(self):
         return self.num
@@ -97,7 +96,10 @@ class Blue(Component):
         super().__init__()
         self.num = 5
 
+def log(txt):
+    print(f"[{time.localtime()[3], time.localtime()[4], time.localtime()[5]}] {txt}")
+
 
 desk = Desk()
-desk.make_random_desk(count=10)
+desk.make_random_desk(count=40)
 desk.print_desk()
