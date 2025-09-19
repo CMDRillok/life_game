@@ -9,11 +9,14 @@ class Zero:
 class Desk:
     def __init__(self):
         self.desk = np.full((X, Y), Zero)
+        self.plants = []
 
     def get(self):
+        """Возвращает поле """
         return self.desk
 
     def print_desk(self):
+        """печатает всю доску"""
         desk_array = self.get()
         for i in range(desk_array.shape[0]):
             row = []
@@ -25,26 +28,30 @@ class Desk:
             print(row)
 
     def create(self, x, y, obj):
+        """создаёт новый объект на поле с координатами X и Y."""
         self.desk[x, y] = obj
+        self.plants.append(Plant(obj))
+        print("растение добавлено")
+
 
     def make_random_desk(self, count=10):
         """Наполняет поле семенами с равномерным распределением"""
         # Рассчитываем шаг для равномерного распределения
-        step_i = max(1, Y // int((count) ** 0.5))
-        step_j = max(1, X // int((count) ** 0.5))
-
+        step_i = max(1, Y // int(count ** 0.5))
+        step_j = max(1, X // int(count ** 0.5))
         placed = 0
         for i in range(0, Y, step_i):
             for j in range(0, X, step_j):
                 if placed < count:
-                    self.create(i, j, Blue())
+                    obj = Blue()
+                    self.create(i, j, obj)
                     placed += 1
                 if placed >= count:
                     return
 
 class Plant:
-    def __init__(self):
-        self.list_of_components = []
+    def __init__(self, seed):
+        self.list_of_components = [seed,]
         self.gen = []
         """это геном организма"""
 
@@ -92,5 +99,5 @@ class Blue(Component):
 
 
 desk = Desk()
-desk.make_random_desk(count=100)
+desk.make_random_desk(count=10)
 desk.print_desk()
