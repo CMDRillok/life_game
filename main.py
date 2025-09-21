@@ -3,30 +3,41 @@ import time
 
 X, Y = (20, 20)
 
-class Zero:
+class Cell:
+    def __init__(self, cell):
+        self.cell = cell
+        self.organic = 0.
+        self.energy = 0.
+
     def get(self):
-        return 0
+        return self.cell.get()
+
+    def get_organic(self):
+        return self.organic
 
 class Desk:
     def __init__(self):
-        self.desk = np.full((X, Y), Zero)
+        self.desk = np.full((X, Y), Cell(Zero))
         self.plants = []
 
-    def print_desk(self):
-        """печатает всю доску"""
-        desk_array = self.desk
-        for i in range(desk_array.shape[0]):
+    def print_desk(self, mode = 0):
+        """печатает всю доску.
+        args: mode = ['bio'/'organic'/'energy'][0/1/2] """
+        for i in range(self.desk.shape[0]):
             row = []
-            for j in range(desk_array.shape[1]):
-                try:
-                    row.append(desk_array[i, j].get())
-                except TypeError:
-                    row.append(0)
+            for j in range(self.desk.shape[1]):
+                if mode == 0:
+                    row.append(self.desk[i, j].get())
+                elif mode == 1:
+                    row.append(self.desk[i, j].organic)
+                else:
+                    row.append(self.desk[i, j].energy)
             print(row)
+
 
     def create(self, x, y, obj):
         """создаёт новый объект на поле с координатами X и Y."""
-        self.desk[x, y] = obj
+        self.desk[x, y].cell = obj
         self.plants.append(Plant(obj))
         log("растение добавлено")
 
@@ -61,6 +72,13 @@ class Component:
         self.coordinates = ()
         """координаты нахождения в поле. (X, Y)"""
         self.energy = 100
+
+    def get(self):
+        return self.num
+
+class Zero:
+    def __init__(self):
+        self.num = 0
 
     def get(self):
         return self.num
@@ -102,4 +120,4 @@ def log(txt):
 
 desk = Desk()
 desk.make_random_desk(count=40)
-desk.print_desk()
+desk.print_desk(0)
