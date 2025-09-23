@@ -1,33 +1,28 @@
 import numpy as np
 import time
 
-X, Y = (20, 20)
-
 class Cell:
     def __init__(self, cell):
         self.cell = cell
         self.organic = 0.
         self.energy = 0.
 
-    def get(self):
-        return self.cell.get()
-
-    def get_organic(self):
-        return self.organic
 
 class Desk:
-    def __init__(self):
-        self.desk = np.full((X, Y), Cell(Zero))
+    def __init__(self, X, Y):
+        self.x = X
+        self.y = Y
+        self.desk = np.full((self.x, self.y), Cell(Zero))
         self.plants = []
 
     def print_desk(self, mode = 0):
         """печатает всю доску.
         args: mode = ['bio'/'organic'/'energy'][0/1/2] """
-        for i in range(self.desk.shape[0]):
+        for i in range(self.x):
             row = []
-            for j in range(self.desk.shape[1]):
+            for j in range(self.y):
                 if mode == 0:
-                    row.append(self.desk[i, j].get())
+                    row.append(self.desk[i, j].cell.get())
                 elif mode == 1:
                     row.append(self.desk[i, j].organic)
                 else:
@@ -41,15 +36,14 @@ class Desk:
         self.plants.append(Plant(obj))
         log("растение добавлено")
 
-
     def make_random_desk(self, count=10):
         """Наполняет поле семенами с равномерным распределением"""
         # Рассчитываем шаг для равномерного распределения
-        step_i = max(1, Y // int(count ** 0.5))
-        step_j = max(1, X // int(count ** 0.5))
+        step_i = max(1, self.y // int(count ** 0.5))
+        step_j = max(1, self.x // int(count ** 0.5))
         placed = 0
-        for i in range(0, Y, step_i):
-            for j in range(0, X, step_j):
+        for i in range(0, self.y, step_i):
+            for j in range(0, self.x, step_j):
                 if placed < count:
                     obj = Blue()
                     self.create(i, j, obj)
@@ -118,6 +112,6 @@ def log(txt):
     print(f"[{time.localtime()[3], time.localtime()[4], time.localtime()[5]}] {txt}")
 
 
-desk = Desk()
+desk = Desk(20, 20)
 desk.make_random_desk(count=40)
 desk.print_desk(0)
