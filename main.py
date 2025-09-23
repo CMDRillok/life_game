@@ -22,7 +22,7 @@ class Desk:
             row = []
             for j in range(self.y):
                 if mode == 0:
-                    row.append(self.desk[i, j].cell.get())
+                    row.append(self.desk[i, j].cell.num)
                 elif mode == 1:
                     row.append(self.desk[i, j].organic)
                 else:
@@ -66,9 +66,6 @@ class Component:
         self.coordinates = ()
         """координаты нахождения в поле. (X, Y)"""
         self.energy = 100
-
-    def get(self):
-        return self.num
 
 class Zero:
     def __init__(self):
