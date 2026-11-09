@@ -68,9 +68,10 @@ def seed_demo(field: Field, seed: int = 12345) -> None:
         y = (cy + dy) % h
         x = (cx + dx) % w
         field.cell_type[y, x] = code
+        field.organism_id[y, x] = 1
         if code == config.STEM:
             field.energy[y, x] = 0.0
-            field.capacity[y, x] = 100.0
+            field.capacity[y, x] = config.STEM_CAPACITY
         elif code == config.SEED:
             field.energy[y, x] = 80.0
         else:

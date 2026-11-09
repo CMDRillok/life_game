@@ -21,6 +21,28 @@ ZOOM_STEP = 1.15
 KEY_PAN_SPEED = 900.0  # пикселей экрана в секунду
 RESIZE_STEP = 64
 
+# --- симуляция ---
+SIM_HZ = 30.0
+MAX_TICKS_PER_FRAME = 4
+STATS_INTERVAL = 0.25  # как часто пересчитывать статистику для HUD
+
+GREEN_RATE = 2.0
+ORANGE_MAX_INTAKE = 2.0
+ORANGE_EFFICIENCY = 1.0
+BLUE_MAX_INTAKE = 2.0
+BLUE_EFFICIENCY = 1.0
+
+WORKER_CAPACITY = 100.0
+STEM_CAPACITY = 100.0
+SEED_CAPACITY = 1000.0
+
+DEATH_ORGANIC = 10.0
+RESOURCE_RADIUS = 1  # 3x3
+
+# Ограничения размещения (пригодятся на этапе роста).
+WORKER_MIN_GAP = 1  # запрет соседства работников по 8 направлениям
+CREATE_ADJACENCY = 4  # новая клетка рядом со стеблем по 4 направлениям
+
 # --- коды клеток ---
 EMPTY = 0
 GREEN = 1
@@ -56,14 +78,16 @@ for _code, _color in CELL_COLORS.items():
 VIEW_CELLS = 0
 VIEW_ORGANIC = 1
 VIEW_ENERGY = 2
+VIEW_CELL_ENERGY = 3
 
 VIEW_NAMES = {
     VIEW_CELLS: "клетки",
-    VIEW_ORGANIC: "органика",
-    VIEW_ENERGY: "энергия",
+    VIEW_ORGANIC: "органика почвы",
+    VIEW_ENERGY: "энергия почвы",
+    VIEW_CELL_ENERGY: "энергия клеток",
 }
 
-VIEW_ORDER = (VIEW_CELLS, VIEW_ORGANIC, VIEW_ENERGY)
+VIEW_ORDER = (VIEW_CELLS, VIEW_ORGANIC, VIEW_ENERGY, VIEW_CELL_ENERGY)
 
 # --- оформление ---
 GRID_COLOR = (42, 46, 50)
@@ -86,4 +110,12 @@ ENERGY_STOPS = (
     (0.55, (20, 160, 200)),
     (0.8, (240, 220, 80)),
     (1.0, (255, 120, 40)),
+)
+
+CELL_ENERGY_STOPS = (
+    (0.0, (12, 14, 18)),
+    (0.25, (22, 92, 150)),
+    (0.5, (28, 176, 168)),
+    (0.75, (238, 198, 72)),
+    (1.0, (255, 92, 42)),
 )

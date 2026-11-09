@@ -19,6 +19,7 @@ from game.camera import Camera
 from game.demo import seed_demo
 from game.field import Field
 from game.renderer import Renderer
+from game.sim import Simulation
 
 SCREEN = (config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
 
@@ -81,6 +82,29 @@ def main() -> None:
         repeat=args.repeat,
     )
     print(f"  ~ {neighbor * 1000.0:.2f} ms/проход (roll аллоцирует копии)")
+    print("-" * 64)
+
+    print("numba: первый тик включает компиляцию ядер...")
+    sim = Simulation(field)
+    sim.tick()
+    print(f"работников на поле: {sim.worker_count}")
+
+    bfs_time = bench(
+        "пересборка BFS (при изменении топологии)",
+        sim.rebuild_bfs,
+        repeat=args.repeat,
+        warmup=1,
+    )
+    tick_time = bench(
+        "тик симуляции (производство/переток/смерть)",
+        sim.tick,
+        repeat=args.repeat,
+        warmup=1,
+    )
+    print(
+        f"  BFS ~ {bfs_time * 1000.0:.2f} ms, "
+        f"тик ~ {tick_time * 1e6:.1f} мкс (~{1.0 / tick_time:.0f} тиков/с)"
+    )
     print("-" * 64)
 
     renderer = Renderer()

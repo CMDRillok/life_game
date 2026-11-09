@@ -43,8 +43,10 @@ class Renderer:
     def __init__(self) -> None:
         self.organic_lut = make_lut(config.ORGANIC_STOPS)
         self.energy_lut = make_lut(config.ENERGY_STOPS)
+        self.cell_energy_lut = make_lut(config.CELL_ENERGY_STOPS)
         self.organic_palette = lut_to_palette(self.organic_lut)
         self.energy_palette = lut_to_palette(self.energy_lut)
+        self.cell_energy_palette = lut_to_palette(self.cell_energy_lut)
 
         self._source_key: tuple | None = None
         self._source_indices: np.ndarray | None = None
@@ -66,7 +68,12 @@ class Renderer:
     def _value_scale(self, field: Field, view_mode: int) -> float:
         key = (view_mode, field.version)
         if key != self._vmax_key:
-            source = field.organic if view_mode == config.VIEW_ORGANIC else field.soil_energy
+            if view_mode == config.VIEW_ORGANIC:
+                source = field.organic
+            elif view_mode == config.VIEW_ENERGY:
+                source = field.soil_energy
+            else:
+                source = field.energy
             vmax = float(source.max()) if source.size else 0.0
             self._vmax = vmax if vmax > 1e-9 else 1.0
             self._vmax_key = key
@@ -77,15 +84,22 @@ class Renderer:
         if view_mode == config.VIEW_CELLS:
             indices = field.cell_type
             palette = CELL_PALETTE_LIST
-        elif view_mode in (config.VIEW_ORGANIC, config.VIEW_ENERGY):
-            values = field.organic if view_mode == config.VIEW_ORGANIC else field.soil_energy
+        elif view_mode in (
+            config.VIEW_ORGANIC,
+            config.VIEW_ENERGY,
+            config.VIEW_CELL_ENERGY,
+        ):
+            if view_mode == config.VIEW_ORGANIC:
+                values = field.organic
+                palette = self.organic_palette
+            elif view_mode == config.VIEW_ENERGY:
+                values = field.soil_energy
+                palette = self.energy_palette
+            else:
+                values = field.energy
+                palette = self.cell_energy_palette
             vmax = self._value_scale(field, view_mode)
             indices = np.clip(values * (255.0 / vmax), 0, 255).astype(np.uint8)
-            palette = (
-                self.organic_palette
-                if view_mode == config.VIEW_ORGANIC
-                else self.energy_palette
-            )
         else:  # pragma: no cover
             raise ValueError(f"неизвестный режим просмотра: {view_mode}")
 
@@ -243,12 +257,13 @@ class Renderer:
         show_grid: bool,
         mouse_pos: tuple[int, int],
         fps: float,
+        sim_stats: dict | None = None,
     ) -> None:
         self._ensure_fonts()
         self.render_field(screen, field, camera, view_mode)
         if show_grid:
             self._draw_grid(screen, camera)
-        self._draw_hud(screen, field, camera, view_mode, mouse_pos, fps)
+        self._draw_hud(screen, field, camera, view_mode, mouse_pos, fps, sim_stats)
 
     @staticmethod
     def _draw_grid(screen: pygame.Surface, camera: Camera) -> None:
@@ -286,23 +301,30 @@ class Renderer:
         view_mode: int,
         mouse_pos: tuple[int, int],
         fps: float,
+        sim_stats: dict | None = None,
     ) -> None:
         assert self._font is not None and self._small_font is not None
 
         mx, my = mouse_pos
         cx, cy = camera.screen_to_cell(mx, my, field)
+        code = int(field.cell_type[cy, cx])
         if view_mode == config.VIEW_CELLS:
-            hover = f"({cx}, {cy})  {config.CELL_NAMES[int(field.cell_type[cy, cx])]}"
+            hover = f"({cx}, {cy})  {config.CELL_NAMES[code]}"
         elif view_mode == config.VIEW_ORGANIC:
             hover = f"({cx}, {cy})  органика: {float(field.organic[cy, cx]):.2f}"
+        elif view_mode == config.VIEW_ENERGY:
+            hover = f"({cx}, {cy})  энергия почвы: {float(field.soil_energy[cy, cx]):.2f}"
         else:
-            hover = f"({cx}, {cy})  энергия: {float(field.soil_energy[cy, cx]):.2f}"
+            hover = (
+                f"({cx}, {cy})  энергия клетки: {float(field.energy[cy, cx]):.2f}  "
+                f"({config.CELL_NAMES[code]})"
+            )
 
         zoom_text = (
             f"{camera.zoom:.3f}x" if camera.zoom < 0.1 else f"{camera.zoom:.2f}x"
         )
         lines = [
-            (f"Слой: {config.VIEW_NAMES[view_mode]}   [1/2/3, Tab]", config.HUD_FG),
+            (f"Слой: {config.VIEW_NAMES[view_mode]}   [1/2/3/4, Tab]", config.HUD_FG),
             (
                 f"Поле: {field.width}x{field.height}   зум: {zoom_text}   "
                 f"тайл: {camera.tile_size:.2f}px",
@@ -310,8 +332,46 @@ class Renderer:
             ),
             (f"FPS: {fps:.0f}   клеток: {field.cells:,}", config.HUD_MUTED),
             (hover, config.HUD_FG),
-            ("ЛКМ — панорама, колесо — зум, G — сетка, R — сброс, F — вписать", config.HUD_MUTED),
         ]
+
+        if sim_stats is not None:
+            counts = sim_stats.get("counts", {})
+            paused = "да" if sim_stats.get("paused") else "нет"
+            lines.extend(
+                [
+                    (
+                        f"Тик: {sim_stats.get('tick', 0)}   "
+                        f"сим: {sim_stats.get('sim_hz', 0.0):.1f}/с   пауза: {paused}",
+                        config.HUD_FG,
+                    ),
+                    (
+                        f"Энергия семени: {sim_stats.get('seed_energy', 0.0):.1f}   "
+                        f"всего в клетках: {sim_stats.get('total_energy', 0.0):.1f}",
+                        config.HUD_MUTED,
+                    ),
+                    (
+                        f"зел: {counts.get(config.GREEN, 0)}   "
+                        f"оранж: {counts.get(config.ORANGE, 0)}   "
+                        f"син: {counts.get(config.BLUE, 0)}   "
+                        f"стебель: {counts.get(config.STEM, 0)}   "
+                        f"семя: {counts.get(config.SEED, 0)}",
+                        config.HUD_MUTED,
+                    ),
+                ]
+            )
+
+        lines.append(
+            (
+                "ЛКМ — панорама, колесо — зум, G — сетка, R — сброс, F — вписать",
+                config.HUD_MUTED,
+            )
+        )
+        lines.append(
+            (
+                "Space — пауза, N — один тик, PageUp/PageDown — скорость",
+                config.HUD_MUTED,
+            )
+        )
 
         padding = 10
         line_h = 21
@@ -348,8 +408,17 @@ class Renderer:
                 x += 19 + label.get_width() + 14
             return
 
+        if view_mode == config.VIEW_ORGANIC:
+            lut = self.organic_lut
+            caption_text = "органика в почве"
+        elif view_mode == config.VIEW_CELL_ENERGY:
+            lut = self.cell_energy_lut
+            caption_text = "энергия клеток"
+        else:
+            lut = self.energy_lut
+            caption_text = "энергия в почве"
+
         if view_mode not in self._gradients:
-            lut = self.organic_lut if view_mode == config.VIEW_ORGANIC else self.energy_lut
             gradient = lut[np.linspace(0, 255, 220).astype(np.uint8)]
             bar = np.repeat(gradient[:, None, :], 12, axis=1)
             self._gradients[view_mode] = pygame.surfarray.make_surface(bar)
@@ -360,9 +429,5 @@ class Renderer:
         right = self._small_font.render(f"{vmax:.1f}", True, config.HUD_MUTED)
         screen.blit(left, (x0 + 244, y0 + 10))
         screen.blit(right, (x0 + 280, y0 + 10))
-        caption = self._small_font.render(
-            "органика в почве" if view_mode == config.VIEW_ORGANIC else "энергия в почве",
-            True,
-            config.HUD_FG,
-        )
+        caption = self._small_font.render(caption_text, True, config.HUD_FG)
         screen.blit(caption, (x0 + 340, y0 + 10))
