@@ -1,105 +1,178 @@
-import numpy as np
-import time
+"""Точка входа life_game.
 
-X, Y = (20, 20)
+Интерактивный режим — поле с панорамой, зумом, ресайзом и тремя слоями.
+Headless — только создание/загрузка поля (симуляция появится позже).
+"""
 
-class Zero:
-    def get(self):
-        return 0
+from __future__ import annotations
 
-class Desk:
-    def __init__(self):
-        self.desk = np.full((X, Y), Zero)
-        self.plants = []
+import argparse
 
-    def print_desk(self):
-        """печатает всю доску"""
-        desk_array = self.desk
-        for i in range(desk_array.shape[0]):
-            row = []
-            for j in range(desk_array.shape[1]):
-                try:
-                    row.append(desk_array[i, j].get())
-                except TypeError:
-                    row.append(0)
-            print(row)
+import pygame
 
-    def create(self, x, y, obj):
-        """создаёт новый объект на поле с координатами X и Y."""
-        self.desk[x, y] = obj
-        self.plants.append(Plant(obj))
-        log("растение добавлено")
+from game import config
+from game.camera import Camera
+from game.demo import seed_demo
+from game.field import Field
+from game.renderer import Renderer
 
 
-    def make_random_desk(self, count=10):
-        """Наполняет поле семенами с равномерным распределением"""
-        # Рассчитываем шаг для равномерного распределения
-        step_i = max(1, Y // int(count ** 0.5))
-        step_j = max(1, X // int(count ** 0.5))
-        placed = 0
-        for i in range(0, Y, step_i):
-            for j in range(0, X, step_j):
-                if placed < count:
-                    obj = Blue()
-                    self.create(i, j, obj)
-                    placed += 1
-                if placed >= count:
-                    log("поле сгенерировано")
-                    return
-
-class Plant:
-    def __init__(self, seed):
-        self.list_of_components = [seed,]
-        self.gen = []
-        """это геном организма"""
-
-class Component:
-    """класс для заимствования повторяющихся методов и параметров."""
-    def __init__(self):
-        self.num = 0
-        """обозначение в матрице"""
-        self.coordinates = ()
-        """координаты нахождения в поле. (X, Y)"""
-        self.energy = 100
-
-    def get(self):
-        return self.num
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="life_game: поле и визуализация")
+    parser.add_argument("--width", type=int, default=config.WIDTH, help="ширина поля")
+    parser.add_argument("--height", type=int, default=config.HEIGHT, help="высота поля")
+    parser.add_argument(
+        "--demo",
+        dest="demo",
+        action="store_true",
+        default=True,
+        help="заполнить демо-данными (по умолчанию)",
+    )
+    parser.add_argument(
+        "--empty",
+        dest="demo",
+        action="store_false",
+        help="пустое поле",
+    )
+    parser.add_argument("--load", type=str, default=None, help="загрузить чекпоинт .npz")
+    parser.add_argument("--save", type=str, default=None, help="сохранить поле при выходе")
+    parser.add_argument("--headless", action="store_true", help="без окна")
+    parser.add_argument("--fps", type=int, default=config.FPS, help="лимит FPS")
+    return parser
 
 
-class Green(Component):
-    """Собирает энергию из воздуха, то есть поглощает свет."""
-    def __init__(self):
-        super().__init__()
-        self.num = 1
-
-class Red(Component):
-    """Собирает энергию с ближайших клеток. Поле в котором действует 3x3"""
-    def __init__(self):
-        super().__init__()
-        self.num = 2
-
-class Yellow(Component):
-    """Собирает органику из почвы и преобразовывает в энергию/или в органику."""
-    def __init__(self):
-        super().__init__()
-        self.num = 3
-
-class White(Component):
-    """стебель. Служит для перемещения энергии от одной клетки к другой"""
-    def __init__(self):
-        super().__init__()
-        self.num = 4
-
-class Blue(Component):
-    """Семя. Хранит генетический код и служит центром принятия решений. То есть, там лежит машинное обучение"""
-    def __init__(self):
-        super().__init__()
-        self.num = 5
-
-def log(txt):
-    print(f"[{time.localtime()[3], time.localtime()[4], time.localtime()[5]}] {txt}")
+def create_field(args: argparse.Namespace) -> Field:
+    if args.load:
+        field = Field.load(args.load)
+        print(f"загружено: {field}")
+    else:
+        field = Field(args.width, args.height)
+        if args.demo:
+            seed_demo(field)
+            print("демо-сцена заполнена")
+    return field
 
 
-desk = Desk()
-desk.make_random_desk(count=40)
-desk.print_desk()
+def run_headless(field: Field, args: argparse.Namespace) -> None:
+    print(field)
+    print(f"память слоёв: {field.memory_bytes() / (1024 * 1024):.1f} MiB")
+    print("headless-цикл симуляции появится на этапе numba-ядра")
+    if args.save:
+        target = field.save(args.save)
+        print(f"сохранено: {target}")
+
+
+def run_interactive(field: Field, args: argparse.Namespace) -> None:
+    pygame.init()
+    pygame.display.set_caption("life_game — поле")
+    screen = pygame.display.set_mode(
+        (config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.RESIZABLE
+    )
+    clock = pygame.time.Clock()
+    renderer = Renderer()
+    camera = Camera()
+    camera.fit(field, *screen.get_size())
+
+    view_mode = config.VIEW_CELLS
+    view_index = 0
+    show_grid = True
+    dragging = False
+    running = True
+
+    while running:
+        dt = clock.tick(args.fps) / 1000.0
+        mouse_pos = pygame.mouse.get_pos()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+            elif event.type == pygame.VIDEORESIZE:
+                screen = pygame.display.set_mode(
+                    (max(320, event.w), max(240, event.h)), pygame.RESIZABLE
+                )
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_1:
+                    view_mode, view_index = config.VIEW_CELLS, 0
+                elif event.key == pygame.K_2:
+                    view_mode, view_index = config.VIEW_ORGANIC, 1
+                elif event.key == pygame.K_3:
+                    view_mode, view_index = config.VIEW_ENERGY, 2
+                elif event.key == pygame.K_TAB:
+                    view_index = (view_index + 1) % len(config.VIEW_ORDER)
+                    view_mode = config.VIEW_ORDER[view_index]
+                elif event.key == pygame.K_g:
+                    show_grid = not show_grid
+                elif event.key == pygame.K_r:
+                    camera.reset(field, *screen.get_size())
+                elif event.key == pygame.K_f:
+                    camera.fit(field, *screen.get_size())
+                elif event.key == pygame.K_RIGHTBRACKET:
+                    field.resize(field.width + config.RESIZE_STEP, field.height)
+                elif event.key == pygame.K_LEFTBRACKET:
+                    field.resize(max(16, field.width - config.RESIZE_STEP), field.height)
+                elif event.key == pygame.K_EQUALS:
+                    field.resize(field.width, field.height + config.RESIZE_STEP)
+                elif event.key == pygame.K_MINUS:
+                    field.resize(field.width, max(16, field.height - config.RESIZE_STEP))
+
+            elif event.type == pygame.MOUSEWHEEL:
+                factor = config.ZOOM_STEP ** event.y
+                camera.zoom_at(*mouse_pos, factor)
+
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button in (1, 2, 3):
+                    dragging = True
+
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button in (1, 2, 3):
+                    dragging = False
+
+            elif event.type == pygame.MOUSEMOTION and dragging:
+                camera.pan_pixels(event.rel[0], event.rel[1])
+
+        keys = pygame.key.get_pressed()
+        dx = float(keys[pygame.K_d] or keys[pygame.K_RIGHT]) - float(
+            keys[pygame.K_a] or keys[pygame.K_LEFT]
+        )
+        dy = float(keys[pygame.K_s] or keys[pygame.K_DOWN]) - float(
+            keys[pygame.K_w] or keys[pygame.K_UP]
+        )
+        if dx or dy:
+            camera.move_pixels(
+                dx * config.KEY_PAN_SPEED * dt,
+                dy * config.KEY_PAN_SPEED * dt,
+            )
+
+        renderer.draw(
+            screen,
+            field,
+            camera,
+            view_mode,
+            show_grid,
+            mouse_pos,
+            clock.get_fps(),
+        )
+        pygame.display.flip()
+
+    if args.save:
+        target = field.save(args.save)
+        print(f"сохранено: {target}")
+
+    pygame.quit()
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    field = create_field(args)
+    if args.headless:
+        run_headless(field, args)
+    else:
+        run_interactive(field, args)
+
+
+if __name__ == "__main__":
+    main()
