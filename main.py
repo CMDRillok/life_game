@@ -87,10 +87,9 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
             if event.type == pygame.QUIT:
                 running = False
 
-            elif event.type == pygame.VIDEORESIZE:
-                screen = pygame.display.set_mode(
-                    (max(320, event.w), max(240, event.h)), pygame.RESIZABLE
-                )
+            # VIDEORESIZE намеренно не обрабатываем: pygame-ce сам обновляет
+            # display surface. Вызов set_mode здесь создаёт цикл
+            # resize -> set_mode -> resize (особенно в тайловых WM вроде Hyprland).
 
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
