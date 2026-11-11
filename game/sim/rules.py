@@ -39,11 +39,16 @@ def produce(
     blue_max_intake: float,
     blue_efficiency: float,
     radius: int,
+    green_crowd_penalty: float,
+    empty_code: int,
 ) -> None:
     """Производство энергии за тик.
 
     produced[y, x] = 1, если клетка произвела энергию в этом тике.
     Это же используется для проверки голодной смерти.
+
+    Зелёная клетка теряет `green_crowd_penalty` эффективности за каждого
+    непустого 8-соседа: в плотной застройке фотосинтез падает.
     """
     h, w = cell_type.shape
     for k in range(worker_count):
@@ -54,9 +59,24 @@ def produce(
         code = cell_type[y, x]
 
         if code == green_code:
+            neighbors = 0
+            for dy in range(-1, 2):
+                ny = _wrap(y + dy, h)
+                for dx in range(-1, 2):
+                    if dy == 0 and dx == 0:
+                        continue
+                    nx = _wrap(x + dx, w)
+                    if cell_type[ny, nx] != empty_code:
+                        neighbors += 1
+
+            efficiency = 1.0 - neighbors * green_crowd_penalty
+            if efficiency < 0.0:
+                efficiency = 0.0
             room = worker_capacity - energy[y, x]
-            if room > 0.0:
-                gain = green_rate if green_rate < room else room
+            if room > 0.0 and efficiency > 0.0:
+                gain = green_rate * efficiency
+                if gain > room:
+                    gain = room
                 if gain > 0.0:
                     energy[y, x] += gain
                     produced[y, x] = 1
@@ -135,39 +155,74 @@ def produce(
 
 
 @njit(cache=True)
-def apply_starvation_death(
+def apply_deaths(
     cell_type: np.ndarray,
     energy: np.ndarray,
     organic: np.ndarray,
+    soil_energy: np.ndarray,
     capacity: np.ndarray,
     organism_id: np.ndarray,
     dist_seed: np.ndarray,
+    die_at: np.ndarray,
     produced: np.ndarray,
-    worker_idx: np.ndarray,
-    worker_count: int,
+    alive_idx: np.ndarray,
+    alive_pos: np.ndarray,
+    alive_count: int,
+    tick: int,
     orange_code: int,
     blue_code: int,
+    seed_code: int,
     empty_code: int,
     death_organic: float,
-) -> int:
-    """Убить голодающих оранжевых и синих.
+    radius: int,
+) -> tuple[int, int]:
+    """Убить голодающих работников и клетки с истёкшим сроком жизни.
 
-    Условие: за тик не произвели энергию и их собственная энергия <= 0.
-    В почву добавляется органика. Энергии при голодной смерти уже нет.
+    Обходит только живые клетки из `alive_idx` и сжимает список на месте.
+    Энергия умершей клетки равномерно рассеивается в `soil_energy` по области
+    (2*radius+1)^2, в собственной клетке остаётся органика.
+
+    Семена сюда не попадают: у них нет срока жизни, они умирают отдельно,
+    когда заканчивается энергия на поддержание.
     """
     h, w = cell_type.shape
     died = 0
-    for k in range(worker_count):
-        idx = worker_idx[k]
+    i = 0
+    while i < alive_count:
+        idx = alive_idx[i]
         y = idx // w
         x = idx - y * w
         code = cell_type[y, x]
-        if code != orange_code and code != blue_code:
+
+        if code == empty_code:
+            # Устаревшая запись: клетка уже исчезла.
+            last = alive_idx[alive_count - 1]
+            alive_idx[i] = last
+            alive_pos[last] = i
+            alive_pos[idx] = -1
+            alive_count -= 1
             continue
-        if produced[y, x] != 0:
+
+        dead = False
+        if (code == orange_code or code == blue_code) and produced[y, x] == 0:
+            if energy[y, x] <= 0.0:
+                dead = True
+        if code != seed_code and die_at[y, x] > 0 and tick >= die_at[y, x]:
+            dead = True
+
+        if not dead:
+            i += 1
             continue
-        if energy[y, x] > 0.0:
-            continue
+
+        spill = energy[y, x]
+        if spill > 0.0:
+            side = radius * 2 + 1
+            part = spill / (side * side)
+            for dy in range(-radius, radius + 1):
+                ny = _wrap(y + dy, h)
+                for dx in range(-radius, radius + 1):
+                    nx = _wrap(x + dx, w)
+                    soil_energy[ny, nx] += part
 
         organic[y, x] += death_organic
         cell_type[y, x] = empty_code
@@ -175,6 +230,14 @@ def apply_starvation_death(
         capacity[y, x] = 0.0
         organism_id[y, x] = 0
         dist_seed[y, x] = -1
+        die_at[y, x] = 0
+        produced[y, x] = 0
+
+        last = alive_idx[alive_count - 1]
+        alive_idx[i] = last
+        alive_pos[last] = i
+        alive_pos[idx] = -1
+        alive_count -= 1
         died += 1
 
-    return died
+    return died, alive_count

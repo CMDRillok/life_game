@@ -52,6 +52,7 @@ class FieldTests(unittest.TestCase):
         field.cell_type[1, 2] = config.ORANGE
         field.energy[1, 2] = 42.0
         field.organic[3, 4] = 5.5
+        field.die_at[1, 2] = 77
         field.touch()
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -62,6 +63,7 @@ class FieldTests(unittest.TestCase):
             self.assertEqual(loaded.cell_type[1, 2], config.ORANGE)
             self.assertAlmostEqual(float(loaded.energy[1, 2]), 42.0)
             self.assertAlmostEqual(float(loaded.organic[3, 4]), 5.5)
+            self.assertEqual(int(loaded.die_at[1, 2]), 77)
             self.assertGreater(len(np.unique(loaded.dist_seed)), 0)
 
 

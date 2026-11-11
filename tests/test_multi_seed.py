@@ -81,15 +81,14 @@ class OrganismIsolationTests(unittest.TestCase):
         put_seed(field, 4, 2, org=2)
         put_stem(field, 3, 2, org=2)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         # Чужой стебель достижим для своего семени (dist >= 0), но работник
         # другого организма не имеет права в него вливать энергию.
         self.assertGreaterEqual(int(field.dist_seed[2, 3]), 0)
-        self.assertAlmostEqual(
-            float(field.energy[2, 2]), config.GREEN_RATE, places=5
-        )
+        gain = config.GREEN_RATE * (1.0 - config.GREEN_CROWD_PENALTY)
+        self.assertAlmostEqual(float(field.energy[2, 2]), gain, places=5)
         self.assertAlmostEqual(float(field.energy[2, 3]), 0.0, places=5)
 
     def test_worker_injects_into_own_stem(self) -> None:
@@ -98,15 +97,14 @@ class OrganismIsolationTests(unittest.TestCase):
         put_worker(field, 2, 2, config.GREEN, org=1)
         put_stem(field, 3, 2, org=1)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         # Энергия прошла работник -> стебель -> семя за один тик.
+        gain = config.GREEN_RATE * (1.0 - config.GREEN_CROWD_PENALTY)
         self.assertAlmostEqual(float(field.energy[2, 2]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[2, 3]), 0.0, places=5)
-        self.assertAlmostEqual(
-            float(field.energy[2, 4]), config.GREEN_RATE, places=5
-        )
+        self.assertAlmostEqual(float(field.energy[2, 4]), gain, places=5)
 
     def test_seed_builds_only_on_own_stems(self) -> None:
         field = make_field(12, 12)
@@ -174,6 +172,8 @@ class SeedActionTests(unittest.TestCase):
     def test_shoot_creates_new_organism(self) -> None:
         field = make_field(30, 30)
         put_seed(field, 10, 10, energy=500.0, org=1)
+        # Потомок появляется рядом со стеблем родителя, а не в радиусе от семени.
+        put_stem(field, 10, 11, org=1)
 
         sim = Simulation(field, rng_seed=11)
         genome = sim.seeds[0].genome
@@ -196,8 +196,12 @@ class SeedActionTests(unittest.TestCase):
             500.0 - 50.0 - config.SHOOT_EXTRA_COST,
             places=5,
         )
-        self.assertLessEqual(max(abs(child.y - 10), abs(child.x - 10)), 6)
-        self.assertGreater(max(abs(child.y - 10), abs(child.x - 10)), 1)
+        # Новая клетка 4-соседняя со стеблем и сразу летит от него прочь.
+        self.assertEqual(abs(child.x - 10) + abs(child.y - 11), 1)
+        self.assertFalse(child.established)
+        self.assertEqual((child.travel_dy, child.travel_dx), (1, 0))
+        self.assertEqual(child.travel_steps, 0)
+        self.assertEqual(child.travel_limit, 6)
 
         # У нового организма пока только семя; родитель остался на месте.
         self.assertEqual(int(field.cell_type[10, 10]), config.SEED)
@@ -253,6 +257,7 @@ class StatsTests(unittest.TestCase):
     def test_stats_report_seeds_organisms_and_generation(self) -> None:
         field = make_field(30, 30)
         put_seed(field, 5, 5, energy=400.0, org=1)
+        put_stem(field, 5, 6, org=1)
         put_seed(field, 20, 20, energy=50.0, org=2)
 
         sim = Simulation(field, rng_seed=2)

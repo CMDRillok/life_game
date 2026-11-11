@@ -22,7 +22,8 @@ class Genome:
     stems_per_worker: float = 2.0
     stem_slack: float = 3.0
     shoot_threshold: float = 600.0
-    shoot_range: int = 6
+    # Максимальное число клеток, которое пролетает семя после отстрела.
+    shoot_range: int = 20
     child_energy: float = 100.0
     duplicate_threshold: float = 400.0
     duplicate_energy: float = 60.0
@@ -65,6 +66,21 @@ class Genome:
             values[name] = value
         return Genome(**values)
 
+    def mutate_one(self, rng: np.random.Generator) -> str:
+        """Мутировать ровно один случайный ген и вернуть его имя."""
+        names = tuple(GENOME_BOUNDS)
+        name = names[int(rng.integers(len(names)))]
+        low, high = GENOME_BOUNDS[name]
+        scale = min(0.5, max(0.0, float(self.mutation_scale)))
+        value = float(getattr(self, name))
+        value += float(rng.normal(0.0, scale * (high - low)))
+        value = min(high, max(low, value))
+        if name == "shoot_range":
+            setattr(self, name, int(round(value)))
+        else:
+            setattr(self, name, value)
+        return name
+
     def as_dict(self) -> dict[str, float | int]:
         return asdict(self)
 
@@ -73,7 +89,7 @@ GENOME_BOUNDS: dict[str, tuple[float, float]] = {
     "stems_per_worker": (0.25, 5.0),
     "stem_slack": (0.0, 12.0),
     "shoot_threshold": (60.0, 900.0),
-    "shoot_range": (2.0, 20.0),
+    "shoot_range": (2.0, 50.0),
     "child_energy": (20.0, 250.0),
     "duplicate_threshold": (60.0, 700.0),
     "duplicate_energy": (20.0, 200.0),

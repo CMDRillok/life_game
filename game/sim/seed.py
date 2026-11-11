@@ -11,11 +11,6 @@ from numba import njit
 
 
 @njit(cache=True, inline="always")
-def _is_worker(code: int, green: int, orange: int, blue: int) -> bool:
-    return code == green or code == orange or code == blue
-
-
-@njit(cache=True, inline="always")
 def _neighbor(x: int, y: int, direction: int, h: int, w: int) -> tuple[int, int]:
     """Сосед по направлению: 0 вверх, 1 вниз, 2 влево, 3 вправо."""
     if direction == 0:
@@ -43,9 +38,6 @@ def find_worker_target(
     stem_queue: np.ndarray,
     start: int,
     end: int,
-    green_code: int,
-    orange_code: int,
-    blue_code: int,
     stem_code: int,
     empty_code: int,
     direction_offset: int,
@@ -54,8 +46,9 @@ def find_worker_target(
 
     `stem_queue[start:end]` — стебли только этого организма в обратном порядке
     BFS: сначала самые дальние от семени, чтобы организм рос наружу.
-    Дополнительно проверяется запрет соседства с другими работниками по
-    8 направлениям. Направления обходятся с поворотом на direction_offset.
+    Работники теперь могут стоять вплотную друг к другу; плотность влияет
+    только на эффективность зелёных клеток. Направления обходятся с поворотом
+    на direction_offset.
 
     Возвращает (found, y, x).
     """
@@ -70,35 +63,8 @@ def find_worker_target(
         for k in range(4):
             direction = (k + direction_offset) & 3
             ny, nx = _neighbor(sx, sy, direction, h, w)
-            if cell_type[ny, nx] != empty_code:
-                continue
-
-            blocked = False
-            for dy in range(-1, 2):
-                for dx in range(-1, 2):
-                    if dy == 0 and dx == 0:
-                        continue
-                    wy = ny + dy
-                    if wy < 0:
-                        wy = h - 1
-                    elif wy >= h:
-                        wy = 0
-                    wx = nx + dx
-                    if wx < 0:
-                        wx = w - 1
-                    elif wx >= w:
-                        wx = 0
-                    if _is_worker(
-                        cell_type[wy, wx], green_code, orange_code, blue_code
-                    ):
-                        blocked = True
-                        break
-                if blocked:
-                    break
-            if blocked:
-                continue
-
-            return 1, ny, nx
+            if cell_type[ny, nx] == empty_code:
+                return 1, ny, nx
 
     return 0, 0, 0
 
@@ -158,48 +124,31 @@ def find_seed_target(
 @njit(cache=True)
 def find_shoot_target(
     cell_type: np.ndarray,
-    seed_y: int,
-    seed_x: int,
-    radius: int,
+    stem_queue: np.ndarray,
+    start: int,
+    end: int,
+    stem_code: int,
     empty_code: int,
-) -> tuple[int, int, int]:
-    """Найти пустую клетку для отстрела нового организма.
+    direction_offset: int,
+) -> tuple[int, int, int, int]:
+    """Найти пустую клетку рядом со стеблем для отстрела нового организма.
 
-    Кольца перебираются от внешнего радиуса к внутреннему, поэтому потомок
-    улетает как можно дальше, но всё ещё в пределах `radius` по Чебышёву.
-    Внутри кольца направление обхода зависит от координат, чтобы отстрел
-    не сваливался всегда в одну сторону.
+    Возвращает (found, y, x, direction), где direction — направление от
+    стебля к новой клетке (0 вверх, 1 вниз, 2 влево, 3 вправо). Семя-потомок
+    полетит именно в эту сторону, не оставляя за собой стебли.
     """
     h, w = cell_type.shape
-    if radius < 1:
-        return 0, 0, 0
+    for i in range(start, end):
+        idx = stem_queue[i]
+        sy = idx // w
+        sx = idx - sy * w
+        if cell_type[sy, sx] != stem_code:
+            continue
 
-    for r in range(radius, 0, -1):
-        start = (seed_x + seed_y + r) & 3
-        for k in range(8 * r):
-            shift = (k + start * (2 * r)) % (8 * r)
-            side = shift // (2 * r)
-            step = shift % (2 * r)
-            if side == 0:
-                dy, dx = -r, -r + step
-            elif side == 1:
-                dy, dx = -r + step, r
-            elif side == 2:
-                dy, dx = r, r - step
-            else:
-                dy, dx = r - step, -r
-
-            ny = seed_y + dy
-            if ny < 0:
-                ny += h
-            elif ny >= h:
-                ny -= h
-            nx = seed_x + dx
-            if nx < 0:
-                nx += w
-            elif nx >= w:
-                nx -= w
+        for k in range(4):
+            direction = (k + direction_offset) & 3
+            ny, nx = _neighbor(sx, sy, direction, h, w)
             if cell_type[ny, nx] == empty_code:
-                return 1, ny, nx
+                return 1, ny, nx, direction
 
-    return 0, 0, 0
+    return 0, 0, 0, 0

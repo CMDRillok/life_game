@@ -31,6 +31,13 @@ class SeedState:
     generation: int = 0
     last_shoot_tick: int = -10_000
     last_duplicate_tick: int = -10_000
+    last_mutation_tick: int = -1
+    # Семя после отстрела сначала летит, не оставляя стеблей.
+    established: bool = True
+    travel_dx: int = 0
+    travel_dy: int = 0
+    travel_steps: int = 0
+    travel_limit: int = 0
 
 
 class Simulation:
@@ -57,6 +64,13 @@ class Simulation:
         # Стебли, сгруппированные по организмам в обратном порядке BFS.
         self.org_stem_idx = np.empty(field.cells, dtype=np.int32)
         self.org_stem_ranges: dict[int, tuple[int, int]] = {}
+
+        # Все занятые клетки: смерть и старение обходят только их.
+        self.alive_idx = np.empty(field.cells, dtype=np.int32)
+        self.alive_pos = np.full(field.cells, -1, dtype=np.int32)
+        self.alive_count = 0
+        self.alive_dirty = True
+        self.lifetimes_ready = False
 
         self.rng = np.random.default_rng(rng_seed)
         self.seeds: list[SeedState] = []
@@ -87,8 +101,123 @@ class Simulation:
             self.workers_dirty = True
             self.org_stem_idx = np.empty(self.field.cells, dtype=np.int32)
             self.org_stem_ranges = {}
+            self.alive_idx = np.empty(self.field.cells, dtype=np.int32)
+            self.alive_pos = np.full(self.field.cells, -1, dtype=np.int32)
+            self.alive_count = 0
+            self.alive_dirty = True
+            self.lifetimes_ready = False
             self.dirty = True
             self.seeds_dirty = True
+
+    def rebuild_alive(self) -> int:
+        """Собрать индексы всех занятых клеток и позиции для O(1) удаления."""
+        indices = np.flatnonzero((self.field.cell_type != config.EMPTY).ravel())
+        self.alive_count = int(indices.size)
+        self.alive_idx[: self.alive_count] = indices
+        self.alive_pos.fill(-1)
+        if self.alive_count:
+            self.alive_pos[indices] = np.arange(self.alive_count, dtype=np.int32)
+        self.alive_dirty = False
+        return self.alive_count
+
+    def _ensure_alive(self) -> None:
+        if self.alive_dirty or self.alive_idx.size != self.field.cells:
+            self.rebuild_alive()
+
+    def _alive_append(self, index: int) -> None:
+        if self.alive_pos[index] >= 0:
+            return
+        if self.alive_count >= self.alive_idx.size:
+            self.alive_dirty = True
+            return
+        self.alive_idx[self.alive_count] = index
+        self.alive_pos[index] = self.alive_count
+        self.alive_count += 1
+
+    def _alive_remove(self, index: int) -> None:
+        pos = int(self.alive_pos[index])
+        if pos < 0:
+            return
+        last = int(self.alive_idx[self.alive_count - 1])
+        self.alive_idx[pos] = last
+        self.alive_pos[last] = pos
+        self.alive_pos[index] = -1
+        self.alive_count -= 1
+
+    def initialize_lifetimes(self) -> None:
+        """Назначить срок жизни клеткам без `die_at` (демо, старый чекпоинт)."""
+        if self.lifetimes_ready:
+            return
+        f = self.field
+        ct = f.cell_type
+        missing = (f.die_at == 0) & (ct != config.EMPTY) & (ct != config.SEED)
+        if missing.any():
+            factor = config.LIFETIME_TICKS_PER_ENERGY
+            workers = missing & (
+                (ct == config.GREEN) | (ct == config.ORANGE) | (ct == config.BLUE)
+            )
+            if workers.any():
+                f.die_at[workers] = self.tick_count + int(
+                    config.WORKER_CREATE_COST * factor
+                )
+            stems = missing & (ct == config.STEM)
+            if stems.any():
+                f.die_at[stems] = self.tick_count + int(
+                    config.SEED_MOVE_COST * factor
+                )
+        self.lifetimes_ready = True
+
+    def _schedule_lifetime(self, y: int, x: int, creation_energy: float) -> None:
+        if creation_energy <= 0.0:
+            self.field.die_at[y, x] = 0
+            return
+        self.field.die_at[y, x] = self.tick_count + int(
+            creation_energy * config.LIFETIME_TICKS_PER_ENERGY
+        )
+
+    def _remove_seed_at(self, y: int, x: int) -> bool:
+        kept = [s for s in self.seeds if not (s.y == y and s.x == x)]
+        if len(kept) == len(self.seeds):
+            return False
+        self.seeds = kept
+        self._rebuild_seed_index()
+        return True
+
+    def _destroy_cell(self, y: int, x: int) -> int:
+        """Уничтожить клетку, рассеяв её энергию и оставив органику."""
+        f = self.field
+        code = int(f.cell_type[y, x])
+        if code == config.EMPTY:
+            return config.EMPTY
+
+        self._ensure_alive()
+        spill = float(f.energy[y, x])
+        if spill > 0.0:
+            side = config.RESOURCE_RADIUS * 2 + 1
+            part = spill / (side * side)
+            for dy in range(-config.RESOURCE_RADIUS, config.RESOURCE_RADIUS + 1):
+                ny = (y + dy) % f.height
+                for dx in range(-config.RESOURCE_RADIUS, config.RESOURCE_RADIUS + 1):
+                    nx = (x + dx) % f.width
+                    f.soil_energy[ny, nx] += part
+
+        f.organic[y, x] += config.DEATH_ORGANIC
+        f.cell_type[y, x] = config.EMPTY
+        f.energy[y, x] = 0.0
+        f.capacity[y, x] = 0.0
+        f.organism_id[y, x] = 0
+        f.dist_seed[y, x] = -1
+        f.die_at[y, x] = 0
+        self._alive_remove(y * f.width + x)
+
+        if code == config.SEED:
+            self._remove_seed_at(y, x)
+        elif code in (config.GREEN, config.ORANGE, config.BLUE):
+            self.prune_workers()
+
+        self.dirty = True
+        f.touch()
+        return code
 
     def _seed_valid(self, state: SeedState) -> bool:
         f = self.field
@@ -158,6 +287,8 @@ class Simulation:
         self.seeds_dirty = True
         self.refresh_seeds()
         self.workers_dirty = True
+        self.alive_dirty = True
+        self.lifetimes_ready = False
 
     # ------------------------------------------------ совместимость со старым API
 
@@ -331,9 +462,6 @@ class Simulation:
             self.org_stem_idx,
             start,
             end,
-            config.GREEN,
-            config.ORANGE,
-            config.BLUE,
             config.STEM,
             config.EMPTY,
             self.tick_count & 3,
@@ -347,6 +475,8 @@ class Simulation:
         f.capacity[ty, tx] = config.WORKER_CAPACITY
         f.organism_id[ty, tx] = state.org_id
         f.dist_seed[ty, tx] = -1
+        self._schedule_lifetime(ty, tx, config.WORKER_CREATE_COST)
+        self._alive_append(ty * f.width + tx)
 
         if self.worker_count < self.worker_idx.size:
             self.worker_idx[self.worker_count] = ty * f.width + tx
@@ -380,12 +510,15 @@ class Simulation:
         f.energy[sy, sx] = 0.0
         f.capacity[sy, sx] = config.STEM_CAPACITY
         f.dist_seed[sy, sx] = -1
+        self._schedule_lifetime(sy, sx, config.SEED_MOVE_COST)
 
         f.cell_type[ny, nx] = config.SEED
         f.energy[ny, nx] = current - config.SEED_MOVE_COST
         f.capacity[ny, nx] = 0.0
         f.organism_id[ny, nx] = state.org_id
         f.dist_seed[ny, nx] = -1
+        f.die_at[ny, nx] = 0
+        self._alive_append(ny * f.width + nx)
 
         state.y, state.x = ny, nx
         self._rebuild_seed_index()
@@ -467,6 +600,8 @@ class Simulation:
         f.capacity[ty, tx] = 0.0
         f.organism_id[ty, tx] = state.org_id
         f.dist_seed[ty, tx] = -1
+        f.die_at[ty, tx] = 0
+        self._alive_append(ty * f.width + tx)
 
         child = SeedState(
             uid=self._new_seed_uid(),
@@ -485,7 +620,11 @@ class Simulation:
         return True
 
     def _seed_shoot(self, state: SeedState) -> bool:
-        """Отстрелить новое семя — нового организма с мутировавшим геномом."""
+        """Отстрелить новое семя — нового организма с мутировавшим геномом.
+
+        Потомок появляется рядом со стеблем родителя и сразу начинает полёт
+        в направлении от стебля. В полёте он не оставляет стеблей.
+        """
         if not self._seed_valid(state):
             return False
 
@@ -496,23 +635,37 @@ class Simulation:
         if float(f.energy[state.y, state.x]) < cost:
             return False
 
-        found, ty, tx = seed_kernels.find_shoot_target(
+        start, end = self.org_stem_ranges.get(state.org_id, (0, 0))
+        found, ty, tx, direction = seed_kernels.find_shoot_target(
             f.cell_type,
-            state.y,
-            state.x,
-            int(genome.shoot_range),
+            self.org_stem_idx,
+            start,
+            end,
+            config.STEM,
             config.EMPTY,
+            self.tick_count & 3,
         )
         if not found:
             return False
+
+        if direction == 0:
+            travel_dy, travel_dx = -1, 0
+        elif direction == 1:
+            travel_dy, travel_dx = 1, 0
+        elif direction == 2:
+            travel_dy, travel_dx = 0, -1
+        else:
+            travel_dy, travel_dx = 0, 1
 
         f.energy[state.y, state.x] -= cost
         f.cell_type[ty, tx] = config.SEED
         f.energy[ty, tx] = child_energy
         f.capacity[ty, tx] = 0.0
+        f.die_at[ty, tx] = 0
         org_id = self._new_org_id()
         f.organism_id[ty, tx] = org_id
         f.dist_seed[ty, tx] = -1
+        self._alive_append(ty * f.width + tx)
 
         child = SeedState(
             uid=self._new_seed_uid(),
@@ -521,6 +674,11 @@ class Simulation:
             org_id=org_id,
             genome=genome.mutated(self.rng),
             generation=state.generation + 1,
+            established=False,
+            travel_dy=travel_dy,
+            travel_dx=travel_dx,
+            travel_steps=0,
+            travel_limit=max(1, int(genome.shoot_range)),
         )
         self.seeds.append(child)
         self._rebuild_seed_index()
@@ -530,8 +688,58 @@ class Simulation:
         f.touch()
         return True
 
+    def _seed_travel_action(self, state: SeedState) -> int:
+        """Полёт семени после отстрела: без стеблей, до энергии или столкновения."""
+        if not self._seed_valid(state):
+            return config.SEED_ACTION_NONE
+
+        f = self.field
+        energy = float(f.energy[state.y, state.x])
+        if (
+            state.travel_steps >= state.travel_limit
+            or energy <= config.SEED_ESTABLISH_ENERGY
+            or energy < config.SEED_TRAVEL_COST
+        ):
+            state.established = True
+            return config.SEED_ACTION_ESTABLISH
+
+        ny = (state.y + state.travel_dy) % f.height
+        nx = (state.x + state.travel_dx) % f.width
+        if f.cell_type[ny, nx] != config.EMPTY:
+            # Столкновение: разрушаем клетку на пути и само семя.
+            self._destroy_cell(ny, nx)
+            self._destroy_cell(state.y, state.x)
+            return config.SEED_ACTION_COLLIDE
+
+        oy, ox = state.y, state.x
+        self._alive_remove(oy * f.width + ox)
+        f.cell_type[oy, ox] = config.EMPTY
+        f.energy[oy, ox] = 0.0
+        f.capacity[oy, ox] = 0.0
+        f.organism_id[oy, ox] = 0
+        f.dist_seed[oy, ox] = -1
+        f.die_at[oy, ox] = 0
+
+        f.cell_type[ny, nx] = config.SEED
+        f.energy[ny, nx] = energy - config.SEED_TRAVEL_COST
+        f.capacity[ny, nx] = 0.0
+        f.organism_id[ny, nx] = state.org_id
+        f.dist_seed[ny, nx] = -1
+        f.die_at[ny, nx] = 0
+        self._alive_append(ny * f.width + nx)
+
+        state.y, state.x = ny, nx
+        state.travel_steps += 1
+        self._rebuild_seed_index()
+        self.dirty = True
+        f.touch()
+        return config.SEED_ACTION_TRAVEL
+
     def _seed_action(self, state: SeedState) -> int:
         """Одно решение семени за тик по его геному."""
+        if not state.established:
+            return self._seed_travel_action(state)
+
         f = self.field
         energy = float(f.energy[state.y, state.x])
         genome = state.genome
@@ -587,6 +795,45 @@ class Simulation:
 
         return config.SEED_ACTION_NONE
 
+    def apply_seed_upkeep(self) -> int:
+        """Списать энергию за жизнь семян; нехватка энергии убивает семя."""
+        self._sync_seeds()
+        if not self.seeds:
+            return 0
+
+        changed = False
+        alive_states = [s for s in self.seeds if self._seed_valid(s)]
+        if len(alive_states) != len(self.seeds):
+            self.seeds = alive_states
+            changed = True
+
+        died = 0
+        f = self.field
+        for state in list(self.seeds):
+            energy = float(f.energy[state.y, state.x])
+            if energy <= config.SEED_UPKEEP:
+                self._destroy_cell(state.y, state.x)
+                died += 1
+                changed = True
+            else:
+                f.energy[state.y, state.x] = energy - config.SEED_UPKEEP
+
+        if changed:
+            self._rebuild_seed_index()
+            self.dirty = True
+        return died
+
+    def _mutate_seeds(self) -> None:
+        """Небольшая мутация одного гена у каждого семени раз в тик."""
+        for state in list(self.seeds):
+            if state.last_mutation_tick == self.tick_count:
+                continue
+            state.last_mutation_tick = self.tick_count
+            if not self._seed_valid(state):
+                continue
+            if self.rng.random() < config.TICK_MUTATION_CHANCE:
+                state.genome.mutate_one(self.rng)
+
     def seed_step(self) -> int:
         """Одно действие первого семени за тик (совместимость и отладка)."""
         self._sync_seeds()
@@ -610,6 +857,7 @@ class Simulation:
         self._sync_seeds()
         if not self.seeds:
             return 0
+        self._mutate_seeds()
         self._ensure_bfs_for_action()
         self._refresh_org_counts()
 
@@ -631,6 +879,8 @@ class Simulation:
         f = self.field
         self._ensure_scratch()
         self._sync_seeds()
+        self.initialize_lifetimes()
+        self._ensure_alive()
         if self.dirty:
             self.rebuild_bfs()
         if self.workers_dirty:
@@ -654,6 +904,8 @@ class Simulation:
             config.BLUE_MAX_INTAKE,
             config.BLUE_EFFICIENCY,
             config.RESOURCE_RADIUS,
+            config.GREEN_CROWD_PENALTY,
+            config.EMPTY,
         )
 
         energy_kernels.inject_workers(
@@ -683,20 +935,26 @@ class Simulation:
             config.SEED,
         )
 
-        died = rules.apply_starvation_death(
+        died, self.alive_count = rules.apply_deaths(
             f.cell_type,
             f.energy,
             f.organic,
+            f.soil_energy,
             f.capacity,
             f.organism_id,
             f.dist_seed,
+            f.die_at,
             self.produced,
-            self.worker_idx,
-            self.worker_count,
+            self.alive_idx,
+            self.alive_pos,
+            self.alive_count,
+            self.tick_count,
             config.ORANGE,
             config.BLUE,
+            config.SEED,
             config.EMPTY,
             config.DEATH_ORGANIC,
+            config.RESOURCE_RADIUS,
         )
         if died:
             self.dirty = True
@@ -705,8 +963,10 @@ class Simulation:
             self.prune_workers()
 
         if self.seed_actions_enabled:
-            # BFS остаётся валидным: смерть убирает работников, а не стебли.
-            # Пересборка произойдёт в начале следующего тика (dirty).
+            # Поддержание жизни семян может убрать источники BFS.
+            self.apply_seed_upkeep()
+            if self.dirty:
+                self.rebuild_bfs()
             self.seed_step_all()
 
         self.tick_count += 1

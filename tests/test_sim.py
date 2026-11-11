@@ -116,24 +116,26 @@ class InjectionTests(unittest.TestCase):
         put_stem(field, 2, 4)
         put_worker(field, 1, 4, config.GREEN, energy=10.0)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
-        # Производство +2, затем всё ушло в соседний стебель (2,4).
+        # Два 8-соседа (оба стебля) снижают производство до 6/8 от GREEN_RATE.
+        gain = config.GREEN_RATE * (1.0 - 2 * config.GREEN_CROWD_PENALTY)
         self.assertAlmostEqual(float(field.energy[4, 1]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[4, 2]), 0.0, places=5)
-        self.assertAlmostEqual(float(field.energy[3, 2]), 12.0, places=5)
+        self.assertAlmostEqual(float(field.energy[3, 2]), 10.0 + gain, places=5)
 
     def test_worker_cannot_inject_directly_into_seed(self) -> None:
         field = make_field(6, 6)
         put_seed(field, 2, 2)
         put_worker(field, 2, 3, config.GREEN)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
+        gain = config.GREEN_RATE * (1.0 - config.GREEN_CROWD_PENALTY)
         self.assertAlmostEqual(float(field.energy[2, 2]), 0.0, places=5)
-        self.assertAlmostEqual(float(field.energy[3, 2]), config.GREEN_RATE, places=5)
+        self.assertAlmostEqual(float(field.energy[3, 2]), gain, places=5)
 
 
 class ProductionTests(unittest.TestCase):
@@ -219,7 +221,7 @@ class DeathTests(unittest.TestCase):
         field = make_field(7, 7)
         put_worker(field, 3, 3, config.ORANGE)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         self.assertTrue(sim.dirty)

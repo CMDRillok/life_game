@@ -29,6 +29,9 @@ class Field:
         self.capacity = np.zeros(shape, dtype=np.float32)
         self.organism_id = np.zeros(shape, dtype=np.int32)
         self.dist_seed = np.full(shape, -1, dtype=np.int32)
+        # Абсолютный тик, на котором клетка умирает от старости.
+        # 0 — срок ещё не назначен; у семян срока нет.
+        self.die_at = np.zeros(shape, dtype=np.int32)
 
     # ------------------------------------------------------------------ базовое
 
@@ -60,6 +63,7 @@ class Field:
             "capacity",
             "organism_id",
             "dist_seed",
+            "die_at",
         )
 
     def layer(self, name: str) -> np.ndarray:
@@ -124,6 +128,7 @@ class Field:
         self.capacity = _resized(self.capacity)
         self.organism_id = _resized(self.organism_id)
         self.dist_seed = _resized(self.dist_seed)
+        self.die_at = _resized(self.die_at)
         self.width = width
         self.height = height
         self.touch()
@@ -136,6 +141,7 @@ class Field:
         self.capacity.fill(0.0)
         self.organism_id.fill(0)
         self.dist_seed.fill(-1)
+        self.die_at.fill(0)
         self.touch()
 
     # ------------------------------------------------------------- чекпоинты
@@ -163,7 +169,13 @@ class Field:
         with np.load(source) as data:
             field = cls(int(data["width"]), int(data["height"]))
             for name in cls.layer_names():
-                getattr(field, name)[...] = data[name]
+                if name in data:
+                    getattr(field, name)[...] = data[name]
+                elif name == "die_at":
+                    # Старые чекпоинты не знали о сроках жизни.
+                    getattr(field, name).fill(0)
+                else:
+                    raise KeyError(f"в чекпоинте нет слоя {name!r}")
         field.touch()
         return field
 
