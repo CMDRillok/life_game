@@ -179,6 +179,10 @@ class Simulation:
         stems = ct == config.STEM
         if stems.any():
             f.die_at[stems] = 0
+            # Миграция старых чекпоинтов с ёмкостью стебля 100.
+            old_capacity = stems & (f.capacity == 100.0)
+            if old_capacity.any():
+                f.capacity[old_capacity] = config.STEM_CAPACITY
         self.lifetimes_ready = True
 
     def _schedule_lifetime(self, y: int, x: int, creation_energy: float) -> None:

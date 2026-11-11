@@ -233,16 +233,27 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
                     accumulator = 0.0
                 elif event.key == pygame.K_n:
                     single_tick = True
+                    accumulator = 0.0
                 elif event.key == pygame.K_PAGEUP:
                     sim_hz = min(1000.0, sim_hz * 1.25)
                 elif event.key == pygame.K_PAGEDOWN:
                     sim_hz = max(0.1, sim_hz / 1.25)
-                elif event.key == pygame.K_g:
-                    show_grid = not show_grid
                 elif event.key == pygame.K_r:
-                    camera.reset(field, *screen.get_size())
-                elif event.key == pygame.K_f:
+                    field = create_field(args)
+                    sim = Simulation(field)
+                    renderer.invalidate()
                     camera.fit(field, *screen.get_size())
+                    accumulator = 0.0
+                    paused = config.START_PAUSED
+                    single_tick = False
+                    measured_ticks = 0
+                    measured_time = 0.0
+                    measured_hz = 0.0
+                    stats_timer = 0.0
+                    sim_stats = sim.stats()
+                    sim_stats["sim_hz"] = 0.0
+                    sim_stats["paused"] = paused
+                    print("симуляция перезапущена")
                 elif event.key == pygame.K_RIGHTBRACKET:
                     field.resize(field.width + config.RESIZE_STEP, field.height)
                     sim.on_field_changed()
@@ -276,6 +287,11 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
             sim.tick()
             ticks_done += 1
             single_tick = False
+            # Сразу обновляем HUD, иначе одиночный тик визуально «не работает».
+            sim_stats = sim.stats()
+            sim_stats["sim_hz"] = measured_hz
+            sim_stats["paused"] = paused
+            stats_timer = 0.0
         elif not paused:
             accumulator += dt
             step = 1.0 / sim_hz

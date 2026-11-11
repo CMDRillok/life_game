@@ -63,6 +63,12 @@ class Renderer:
         self._small_font: pygame.font.Font | None = None
         self._gradients: dict[int, pygame.Surface] = {}
 
+    def invalidate(self) -> None:
+        """Сбросить кэш поля после перезапуска/подмены Field."""
+        self._source_key = None
+        self._scaled_key = None
+        self._vmax_key = None
+
     # ------------------------------------------------------------------ источники
 
     def _value_scale(self, field: Field, view_mode: int) -> float:
@@ -100,10 +106,13 @@ class Renderer:
                 palette = self.cell_energy_palette
             vmax = self._value_scale(field, view_mode)
             if view_mode in (config.VIEW_ORGANIC, config.VIEW_ENERGY):
+                # Гамма-коррекция вытягивает слабые значения из чёрного.
+                scaled = np.power(
+                    np.clip(values / vmax, 0.0, 1.0),
+                    config.RESOURCE_MAP_GAMMA,
+                )
                 # Токсичный избыток всегда ярко-красный, независимо от vmax.
-                indices = np.clip(
-                    values * (254.0 / vmax), 0, 254
-                ).astype(np.uint8)
+                indices = np.clip(scaled * 254.0, 0, 254).astype(np.uint8)
                 toxic = values >= config.RESOURCE_TOXIC_THRESHOLD
                 if toxic.any():
                     indices[toxic] = 255
@@ -380,7 +389,7 @@ class Renderer:
 
         lines.append(
             (
-                "ЛКМ — панорама, колесо — зум, G — сетка, R — сброс, F — вписать",
+                "ЛКМ — панорама, колесо — зум, R — перезапуск",
                 config.HUD_MUTED,
             )
         )
