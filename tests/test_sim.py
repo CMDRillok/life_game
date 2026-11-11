@@ -72,7 +72,7 @@ class FlowTests(unittest.TestCase):
         put_stem(field, 1, 0)
         put_stem(field, 2, 0, energy=10.0)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         # Дальний стебель отдал энергию ближнему, но до семени она не дошла.
@@ -89,7 +89,7 @@ class FlowTests(unittest.TestCase):
         put_seed(field, 0, 0, energy=995.0)
         put_stem(field, 1, 0, energy=50.0)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         self.assertAlmostEqual(float(field.energy[0, 0]), config.SEED_CAPACITY, places=5)
@@ -224,13 +224,14 @@ class DeathTests(unittest.TestCase):
 
         self.assertTrue(sim.dirty)
 
-    def test_worker_list_rebuilt_after_death(self) -> None:
+    def test_worker_list_pruned_after_death(self) -> None:
         field = make_field(7, 7)
         put_worker(field, 3, 3, config.ORANGE)
 
         sim = Simulation(field)
         self.assertEqual(sim.tick(), 1)
-        self.assertEqual(sim.worker_count, 1)
+        # Умерший работник удаляется из списка сразу после смерти.
+        self.assertEqual(sim.worker_count, 0)
 
         self.assertEqual(sim.tick(), 0)
         self.assertEqual(sim.worker_count, 0)

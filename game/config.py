@@ -39,7 +39,15 @@ SEED_CAPACITY = 1000.0
 DEATH_ORGANIC = 10.0
 RESOURCE_RADIUS = 1  # 3x3
 
-# Ограничения размещения (пригодятся на этапе роста).
+# --- действия семени ---
+SEED_ACTION_MOVE = -1
+SEED_MOVE_COST = 0.0
+STEM_CREATE_COST = 5.0
+WORKER_CREATE_COST = 20.0
+# Сколько стеблей организм хочет иметь на одного работника (для default-политики).
+SEED_STEMS_PER_WORKER = 2
+
+# Ограничения размещения.
 WORKER_MIN_GAP = 1  # запрет соседства работников по 8 направлениям
 CREATE_ADJACENCY = 4  # новая клетка рядом со стеблем по 4 направлениям
 

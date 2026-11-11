@@ -96,7 +96,7 @@ def main() -> None:
         warmup=1,
     )
     tick_time = bench(
-        "тик симуляции (производство/переток/смерть)",
+        "тик симуляции (включая рост)",
         sim.tick,
         repeat=args.repeat,
         warmup=1,
