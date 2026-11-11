@@ -345,7 +345,14 @@ class Renderer:
                         config.HUD_FG,
                     ),
                     (
-                        f"Энергия семени: {sim_stats.get('seed_energy', 0.0):.1f}   "
+                        f"Семян: {sim_stats.get('seed_count', 0)} "
+                        f"(энергия {sim_stats.get('seed_energy', 0.0):.1f})   "
+                        f"организмов: {sim_stats.get('organism_count', 0)}   "
+                        f"поколение: {sim_stats.get('generation_max', 0)}/"
+                        f"{sim_stats.get('generation_avg', 0.0):.1f}",
+                        config.HUD_MUTED,
+                    ),
+                    (
                         f"всего в клетках: {sim_stats.get('total_energy', 0.0):.1f}",
                         config.HUD_MUTED,
                     ),

@@ -36,6 +36,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="пустое поле",
     )
+    parser.add_argument(
+        "--organisms",
+        type=int,
+        default=1,
+        help="сколько организмов поставить в демо-сцене",
+    )
+    parser.add_argument(
+        "--seeds-per-org",
+        type=int,
+        default=1,
+        help="сколько семян ставить в каждом организме",
+    )
     parser.add_argument("--load", type=str, default=None, help="загрузить чекпоинт .npz")
     parser.add_argument("--save", type=str, default=None, help="сохранить поле при выходе")
     parser.add_argument("--headless", action="store_true", help="без окна")
@@ -62,8 +74,16 @@ def create_field(args: argparse.Namespace) -> Field:
     else:
         field = Field(args.width, args.height)
         if args.demo:
-            seed_demo(field)
-            print("демо-сцена заполнена")
+            seed_demo(
+                field,
+                organisms=max(1, args.organisms),
+                seeds_per_org=max(1, args.seeds_per_org),
+            )
+            print(
+                "демо-сцена заполнена: "
+                f"организмов {max(1, args.organisms)}, "
+                f"семян на организм {max(1, args.seeds_per_org)}"
+            )
     return field
 
 
@@ -72,7 +92,11 @@ def _print_stats(sim: Simulation) -> None:
     counts = stats["counts"]
     print(
         f"тик {stats['tick']}: "
-        f"энергия семени {stats['seed_energy']:.1f}, "
+        f"семян {stats['seed_count']} "
+        f"(энергия {stats['seed_energy']:.1f}), "
+        f"организмов {stats['organism_count']}, "
+        f"поколение max {stats['generation_max']} "
+        f"avg {stats['generation_avg']:.1f}, "
         f"всего в клетках {stats['total_energy']:.1f}, "
         f"зел {counts[config.GREEN]}, "
         f"оранж {counts[config.ORANGE]}, "

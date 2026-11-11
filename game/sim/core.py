@@ -1,6 +1,13 @@
-"""Оркестрация тика симуляции."""
+"""Оркестрация тика симуляции.
+
+В поле может жить несколько организмов (`organism_id`) и несколько семян
+внутри одного организма. Состояние семян (координаты, геном, поколение)
+хранится в Python-списке `SeedState`, а горячие слои поля остаются numpy SoA.
+"""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -9,12 +16,32 @@ from ..field import Field
 from . import energy as energy_kernels
 from . import rules
 from . import seed as seed_kernels
+from .genome import Genome
+
+
+@dataclass
+class SeedState:
+    """Одно семя организма: позиция, геном и поколение."""
+
+    uid: int
+    y: int
+    x: int
+    org_id: int
+    genome: Genome
+    generation: int = 0
+    last_shoot_tick: int = -10_000
+    last_duplicate_tick: int = -10_000
 
 
 class Simulation:
-    """Тик организма: BFS -> производство -> инъекция -> переток -> смерть -> семя."""
+    """Тик: BFS -> производство -> инъекция -> переток -> смерть -> действия семян."""
 
-    def __init__(self, field: Field, seed_actions: bool = True) -> None:
+    def __init__(
+        self,
+        field: Field,
+        seed_actions: bool = True,
+        rng_seed: int | None = None,
+    ) -> None:
         self.field = field
         self.seed_actions_enabled = seed_actions
         self.tick_count = 0
@@ -27,12 +54,22 @@ class Simulation:
         self.worker_idx = np.empty(field.cells, dtype=np.int32)
         self.worker_count = 0
         self.workers_dirty = True
+        # Стебли, сгруппированные по организмам в обратном порядке BFS.
+        self.org_stem_idx = np.empty(field.cells, dtype=np.int32)
+        self.org_stem_ranges: dict[int, tuple[int, int]] = {}
 
-        self.seed_y = -1
-        self.seed_x = -1
-        self.org_id = 0
-        self.last_seed_action = 0
-        self.refresh_seed()
+        self.rng = np.random.default_rng(rng_seed)
+        self.seeds: list[SeedState] = []
+        self.seed_idx = np.empty(16, dtype=np.int32)
+        self.seed_idx_count = 0
+        self.seeds_dirty = True
+        self._next_seed_uid = 0
+        self.next_org_id = 1
+
+        self._seed_phase = False
+        self._org_counts: dict[int, list[int]] = {}
+        self.last_seed_action = config.SEED_ACTION_NONE
+        self.refresh_seeds()
 
     # ------------------------------------------------------------------ служебное
 
@@ -48,54 +85,109 @@ class Simulation:
             self.worker_idx = np.empty(self.field.cells, dtype=np.int32)
             self.worker_count = 0
             self.workers_dirty = True
+            self.org_stem_idx = np.empty(self.field.cells, dtype=np.int32)
+            self.org_stem_ranges = {}
             self.dirty = True
+            self.seeds_dirty = True
 
-    def _seed_valid(self) -> bool:
+    def _seed_valid(self, state: SeedState) -> bool:
         f = self.field
         return (
-            0 <= self.seed_y < f.height
-            and 0 <= self.seed_x < f.width
-            and f.cell_type[self.seed_y, self.seed_x] == config.SEED
+            0 <= state.y < f.height
+            and 0 <= state.x < f.width
+            and f.cell_type[state.y, state.x] == config.SEED
         )
 
-    def refresh_seed(self) -> None:
-        """Найти первое семя на поле и запомнить его организм."""
-        ys, xs = np.nonzero(self.field.cell_type == config.SEED)
-        if len(ys) > 0:
-            self.seed_y = int(ys[0])
-            self.seed_x = int(xs[0])
-            self.org_id = int(self.field.organism_id[self.seed_y, self.seed_x])
-        else:
-            self.seed_y = -1
-            self.seed_x = -1
-            self.org_id = 0
+    def _new_seed_uid(self) -> int:
+        uid = self._next_seed_uid
+        self._next_seed_uid += 1
+        return uid
+
+    def _new_org_id(self) -> int:
+        org_id = self.next_org_id
+        self.next_org_id += 1
+        return org_id
+
+    def _rebuild_seed_index(self) -> None:
+        """Пересобрать плоские индексы семян из списка состояний."""
+        count = len(self.seeds)
+        if self.seed_idx.size < count:
+            self.seed_idx = np.empty(max(16, count), dtype=np.int32)
+        w = self.field.width
+        for i, state in enumerate(self.seeds):
+            self.seed_idx[i] = state.y * w + state.x
+        self.seed_idx_count = count
+
+    def refresh_seeds(self) -> None:
+        """Синхронизировать список семян с полем.
+
+        Существующие состояния ищутся по позиции и организму, поэтому genomes
+        и поколения не теряются. Для новых клеток-семян создаётся стартовый
+        геном. Полный скан поля выполняется только при внешних изменениях.
+        """
+        f = self.field
+        ys, xs = np.nonzero(f.cell_type == config.SEED)
+        existing = {(s.y, s.x, s.org_id): s for s in self.seeds}
+        seeds: list[SeedState] = []
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            org_id = int(f.organism_id[y, x])
+            state = existing.pop((y, x, org_id), None)
+            if state is None:
+                state = SeedState(
+                    uid=self._new_seed_uid(),
+                    y=y,
+                    x=x,
+                    org_id=org_id,
+                    genome=Genome(),
+                    generation=0,
+                )
+            seeds.append(state)
+        self.seeds = seeds
+        self._rebuild_seed_index()
+        self.next_org_id = max(self.next_org_id, int(f.organism_id.max()) + 1)
+        self.seeds_dirty = False
         self.dirty = True
+
+    def _sync_seeds(self) -> None:
+        if self.seeds_dirty:
+            self.refresh_seeds()
 
     def on_field_changed(self) -> None:
         """Вызывать после resize/load/ручного изменения топологии."""
         self._ensure_scratch()
-        self.refresh_seed()
+        self.seeds_dirty = True
+        self.refresh_seeds()
         self.workers_dirty = True
+
+    # ------------------------------------------------ совместимость со старым API
+
+    @property
+    def seed_y(self) -> int:
+        return self.seeds[0].y if self.seeds else -1
+
+    @property
+    def seed_x(self) -> int:
+        return self.seeds[0].x if self.seeds else -1
+
+    @property
+    def org_id(self) -> int:
+        return self.seeds[0].org_id if self.seeds else 0
 
     # ---------------------------------------------------------------------- тик
 
     def rebuild_bfs(self) -> int:
-        if not self._seed_valid():
-            self.refresh_seed()
-        if self._seed_valid():
-            seed_y, seed_x = self.seed_y, self.seed_x
-        else:
-            seed_y, seed_x = -1, -1
+        """Мульти-источниковый BFS от всех семян по стеблям их организмов."""
+        self._sync_seeds()
         self.bfs_count = energy_kernels.build_bfs(
             self.field.cell_type,
             self.field.organism_id,
             self.field.dist_seed,
             self.parent_dir,
             self.queue,
-            seed_y,
-            seed_x,
-            self.org_id,
+            self.seed_idx,
+            self.seed_idx_count,
             config.STEM,
+            config.SEED,
         )
         self.dirty = False
         return self.bfs_count
@@ -128,39 +220,117 @@ class Simulation:
         self.worker_idx[: self.worker_count] = kept
         return self.worker_count
 
+    # --------------------------------------------------------- статистика организмов
+
+    def _refresh_org_counts(self) -> None:
+        """Посчитать семена/стебли/работников по организмам за текущую топологию."""
+        counts: dict[int, list[int]] = {}
+        self.org_stem_ranges = {}
+        for state in self.seeds:
+            counts.setdefault(state.org_id, [0, 0, 0])[0] += 1
+
+        if self.bfs_count > 0:
+            idx = self.queue[: self.bfs_count]
+            types = self.field.cell_type.ravel()[idx]
+            stems = idx[types == config.STEM]
+            if stems.size:
+                # Обратный BFS-порядок внутри каждого организма: дальние
+                # стебли первыми. Это позволяет каждому семени перебирать
+                # только стебли своего организма, а не всю очередь.
+                stems = stems[::-1]
+                orgs = self.field.organism_id.ravel()[stems]
+                order = np.argsort(orgs, kind="stable")
+                stems = stems[order]
+                orgs = orgs[order]
+                self.org_stem_idx[: stems.size] = stems
+                unique, amounts = np.unique(orgs, return_counts=True)
+                cursor = 0
+                for org, amount in zip(unique.tolist(), amounts.tolist()):
+                    end = cursor + int(amount)
+                    self.org_stem_ranges[int(org)] = (cursor, end)
+                    counts.setdefault(int(org), [0, 0, 0])[1] += int(amount)
+                    cursor = end
+
+        if self.worker_count > 0:
+            idx = self.worker_idx[: self.worker_count]
+            codes = self.field.cell_type.ravel()[idx]
+            keep = (
+                (codes == config.GREEN)
+                | (codes == config.ORANGE)
+                | (codes == config.BLUE)
+            )
+            idx = idx[keep]
+            if idx.size:
+                orgs = self.field.organism_id.ravel()[idx]
+                unique, amounts = np.unique(orgs, return_counts=True)
+                for org, amount in zip(unique.tolist(), amounts.tolist()):
+                    counts.setdefault(int(org), [0, 0, 0])[2] += int(amount)
+
+        self._org_counts = counts
+
+    def _org_stat(self, org_id: int) -> list[int]:
+        return self._org_counts.setdefault(org_id, [0, 0, 0])
+
     # ------------------------------------------------------------ действия семени
 
-    def _worker_code_for_tick(self) -> int:
-        """Детерминированно чередовать тип нового работника."""
-        return (config.GREEN, config.ORANGE, config.BLUE)[
-            (self.tick_count + self.worker_count) % 3
-        ]
+    def _worker_code_for_seed(self, state: SeedState, workers: int) -> int:
+        """Выбрать тип работника по весам генома.
+
+        При равных весах типы детерминированно чередуются, поэтому стартовая
+        популяция строит все три вида. Гены с меньшим весом проигрывают
+        максимальному и постепенно вытесняются.
+        """
+        genome = state.genome
+        weighted = (
+            (config.GREEN, genome.green_weight),
+            (config.ORANGE, genome.orange_weight),
+            (config.BLUE, genome.blue_weight),
+        )
+        best = max(weight for _, weight in weighted)
+        if best <= 0.0:
+            candidates = [config.GREEN, config.ORANGE, config.BLUE]
+        else:
+            candidates = [
+                code for code, weight in weighted if weight >= best - 1e-9
+            ]
+        shift = self.tick_count + workers + state.uid
+        return candidates[shift % len(candidates)]
+
+    def _ensure_bfs_for_action(self) -> None:
+        if self.dirty and not self._seed_phase:
+            self.rebuild_bfs()
 
     def seed_create_auto(self, code: int) -> bool:
-        """Создать работника в подходящей пустой клетке рядом со стеблем.
+        """Создать работника для первого семени.
 
         Стебли семя напрямую не создаёт: они появляются только при движении.
-        Стоимость списывается с энергии семени. Проверяется запрет соседства
-        работников с другими работниками по 8 направлениям.
         """
         if code not in (config.GREEN, config.ORANGE, config.BLUE):
             raise ValueError(f"семя не может создать клетку кода {code}")
+        self._sync_seeds()
+        if not self.seeds:
+            return False
+        state = self.seeds[0]
+        if not self._seed_valid(state):
+            return False
+        self._ensure_bfs_for_action()
+        self._refresh_org_counts()
+        return self._seed_create_worker(state, code)
 
-        if not self._seed_valid():
+    def _seed_create_worker(self, state: SeedState, code: int) -> bool:
+        if not self._seed_valid(state):
             return False
 
         f = self.field
-        cost = config.WORKER_CREATE_COST
-        if float(f.energy[self.seed_y, self.seed_x]) < cost:
+        if float(f.energy[state.y, state.x]) < config.WORKER_CREATE_COST:
             return False
 
-        if self.dirty:
-            self.rebuild_bfs()
-
+        start, end = self.org_stem_ranges.get(state.org_id, (0, 0))
         found, ty, tx = seed_kernels.find_worker_target(
             f.cell_type,
-            self.queue,
-            self.bfs_count,
+            self.org_stem_idx,
+            start,
+            end,
             config.GREEN,
             config.ORANGE,
             config.BLUE,
@@ -171,11 +341,11 @@ class Simulation:
         if not found:
             return False
 
-        f.energy[self.seed_y, self.seed_x] -= cost
+        f.energy[state.y, state.x] -= config.WORKER_CREATE_COST
         f.cell_type[ty, tx] = code
         f.energy[ty, tx] = 0.0
         f.capacity[ty, tx] = config.WORKER_CAPACITY
-        f.organism_id[ty, tx] = self.org_id
+        f.organism_id[ty, tx] = state.org_id
         f.dist_seed[ty, tx] = -1
 
         if self.worker_count < self.worker_idx.size:
@@ -184,114 +354,283 @@ class Simulation:
         else:
             self.workers_dirty = True
 
+        self._org_stat(state.org_id)[2] += 1
         self.dirty = True
         f.touch()
         return True
 
-    def _apply_seed_move(self, ny: int, nx: int) -> bool:
+    def _apply_seed_move(self, state: SeedState, ny: int, nx: int) -> bool:
         """Переместить семя в пустого соседа, оставив на старом месте стебель.
 
         Ход оплачивает появившийся стебель (SEED_MOVE_COST).
         """
-        if not self._seed_valid():
+        if not self._seed_valid(state):
             return False
 
         f = self.field
         if f.cell_type[ny, nx] != config.EMPTY:
             return False
 
-        cost = config.SEED_MOVE_COST
-        current = float(f.energy[self.seed_y, self.seed_x])
-        if current < cost:
+        current = float(f.energy[state.y, state.x])
+        if current < config.SEED_MOVE_COST:
             return False
 
-        sy, sx = self.seed_y, self.seed_x
+        sy, sx = state.y, state.x
         f.cell_type[sy, sx] = config.STEM
         f.energy[sy, sx] = 0.0
         f.capacity[sy, sx] = config.STEM_CAPACITY
         f.dist_seed[sy, sx] = -1
 
         f.cell_type[ny, nx] = config.SEED
-        f.energy[ny, nx] = current - cost
+        f.energy[ny, nx] = current - config.SEED_MOVE_COST
         f.capacity[ny, nx] = 0.0
-        f.organism_id[ny, nx] = self.org_id
+        f.organism_id[ny, nx] = state.org_id
         f.dist_seed[ny, nx] = -1
 
-        self.seed_y, self.seed_x = ny, nx
+        state.y, state.x = ny, nx
+        self._rebuild_seed_index()
+        self._org_stat(state.org_id)[1] += 1
         self.dirty = True
         f.touch()
         return True
 
     def seed_move(self, dx: int, dy: int) -> bool:
-        """Переместить семя на одну клетку в заданном направлении."""
+        """Переместить первое семя на одну клетку в заданном направлении."""
         if abs(dx) + abs(dy) != 1:
             raise ValueError("семя ходит ровно на одну клетку по 4 направлениям")
-        if not self._seed_valid():
+        self._sync_seeds()
+        if not self.seeds:
             return False
+        state = self.seeds[0]
         f = self.field
-        ny = (self.seed_y + dy) % f.height
-        nx = (self.seed_x + dx) % f.width
-        return self._apply_seed_move(ny, nx)
+        ny = (state.y + dy) % f.height
+        nx = (state.x + dx) % f.width
+        return self._apply_seed_move(state, ny, nx)
 
-    def _seed_move_auto(self) -> bool:
+    def _seed_move_auto(self, state: SeedState) -> bool:
         """Сдвинуть семя в первого пустого 4-соседа, оставив стебель."""
         f = self.field
-        if float(f.energy[self.seed_y, self.seed_x]) < config.SEED_MOVE_COST:
+        if float(f.energy[state.y, state.x]) < config.SEED_MOVE_COST:
             return False
         found, ny, nx = seed_kernels.find_move_target(
             f.cell_type,
-            self.seed_y,
-            self.seed_x,
+            state.y,
+            state.x,
             config.EMPTY,
             self.tick_count & 3,
         )
         if not found:
             return False
-        return self._apply_seed_move(ny, nx)
+        return self._apply_seed_move(state, ny, nx)
 
-    def seed_step(self) -> int:
-        """Одно действие семени за тик (default-политика для этапа 4b).
+    def _seed_duplicate(self, state: SeedState) -> bool:
+        """Создать ещё одно семя в том же организме (с мутацией генома)."""
+        if not self._seed_valid(state):
+            return False
 
-        Стебли создаются только ходом: семя уходит, на старом месте остаётся
-        стебель. Если стеблей не хватает, семя сначала двигается; иначе
-        создаёт работника. При неудаче пробует второе действие.
+        counts = self._org_stat(state.org_id)
+        if counts[0] >= config.MAX_SEEDS_PER_ORGANISM:
+            return False
 
-        Возвращает код созданной клетки, SEED_ACTION_MOVE при ходе
-        или 0, если действий не было.
-        """
-        if not self._seed_valid():
-            return 0
-        if self.dirty:
-            self.rebuild_bfs()
+        genome = state.genome
+        child_energy = genome.duplicate_energy
+        cost = child_energy + config.DUPLICATE_EXTRA_COST
+        f = self.field
+        if float(f.energy[state.y, state.x]) < cost:
+            return False
 
-        stems = max(0, self.bfs_count - 1)
-        workers = self.worker_count
-        worker_code = self._worker_code_for_tick()
-        want_stem = stems < config.SEED_STEMS_PER_WORKER * workers + 3
+        start, end = self.org_stem_ranges.get(state.org_id, (0, 0))
+        found, ty, tx = seed_kernels.find_seed_target(
+            f.cell_type,
+            self.org_stem_idx,
+            start,
+            end,
+            config.STEM,
+            config.EMPTY,
+            self.tick_count & 3,
+        )
+        if not found:
+            # Запасной вариант: рядом с родительским семенем.
+            found, ty, tx = seed_kernels.find_move_target(
+                f.cell_type,
+                state.y,
+                state.x,
+                config.EMPTY,
+                self.tick_count & 3,
+            )
+        if not found:
+            return False
 
-        if want_stem:
-            if self._seed_move_auto():
-                self.last_seed_action = config.SEED_ACTION_MOVE
+        f.energy[state.y, state.x] -= cost
+        f.cell_type[ty, tx] = config.SEED
+        f.energy[ty, tx] = child_energy
+        f.capacity[ty, tx] = 0.0
+        f.organism_id[ty, tx] = state.org_id
+        f.dist_seed[ty, tx] = -1
+
+        child = SeedState(
+            uid=self._new_seed_uid(),
+            y=ty,
+            x=tx,
+            org_id=state.org_id,
+            genome=genome.mutated(self.rng),
+            generation=state.generation + 1,
+        )
+        self.seeds.append(child)
+        self._rebuild_seed_index()
+        counts[0] += 1
+        state.last_duplicate_tick = self.tick_count
+        self.dirty = True
+        f.touch()
+        return True
+
+    def _seed_shoot(self, state: SeedState) -> bool:
+        """Отстрелить новое семя — нового организма с мутировавшим геномом."""
+        if not self._seed_valid(state):
+            return False
+
+        genome = state.genome
+        child_energy = genome.child_energy
+        cost = child_energy + config.SHOOT_EXTRA_COST
+        f = self.field
+        if float(f.energy[state.y, state.x]) < cost:
+            return False
+
+        found, ty, tx = seed_kernels.find_shoot_target(
+            f.cell_type,
+            state.y,
+            state.x,
+            int(genome.shoot_range),
+            config.EMPTY,
+        )
+        if not found:
+            return False
+
+        f.energy[state.y, state.x] -= cost
+        f.cell_type[ty, tx] = config.SEED
+        f.energy[ty, tx] = child_energy
+        f.capacity[ty, tx] = 0.0
+        org_id = self._new_org_id()
+        f.organism_id[ty, tx] = org_id
+        f.dist_seed[ty, tx] = -1
+
+        child = SeedState(
+            uid=self._new_seed_uid(),
+            y=ty,
+            x=tx,
+            org_id=org_id,
+            genome=genome.mutated(self.rng),
+            generation=state.generation + 1,
+        )
+        self.seeds.append(child)
+        self._rebuild_seed_index()
+        self._org_counts[org_id] = [1, 0, 0]
+        state.last_shoot_tick = self.tick_count
+        self.dirty = True
+        f.touch()
+        return True
+
+    def _seed_action(self, state: SeedState) -> int:
+        """Одно решение семени за тик по его геному."""
+        f = self.field
+        energy = float(f.energy[state.y, state.x])
+        genome = state.genome
+        counts = self._org_stat(state.org_id)
+
+        population_full = len(self.seeds) >= config.MAX_TOTAL_SEEDS
+        can_shoot = (
+            not population_full
+            and self.tick_count - state.last_shoot_tick
+            >= config.SEED_SHOOT_COOLDOWN
+        )
+        if (
+            can_shoot
+            and energy >= genome.shoot_threshold
+            and self._seed_shoot(state)
+        ):
+            return config.SEED_ACTION_SHOOT
+
+        can_duplicate = (
+            not population_full
+            and self.tick_count - state.last_duplicate_tick
+            >= config.SEED_DUPLICATE_COOLDOWN
+        )
+        if (
+            can_duplicate
+            and energy >= genome.duplicate_threshold
+            and counts[0] < config.MAX_SEEDS_PER_ORGANISM
+            and self._seed_duplicate(state)
+        ):
+            return config.SEED_ACTION_DUPLICATE
+
+        workers = counts[2]
+        target_stems = genome.stems_per_worker * workers + genome.stem_slack
+        prefer_move = counts[1] < target_stems
+        if (
+            not prefer_move
+            and genome.move_bias > 0.0
+            and self.rng.random() < genome.move_bias
+        ):
+            prefer_move = True
+
+        worker_code = self._worker_code_for_seed(state, workers)
+        if prefer_move:
+            if self._seed_move_auto(state):
                 return config.SEED_ACTION_MOVE
-            if self.seed_create_auto(worker_code):
-                self.last_seed_action = worker_code
+            if self._seed_create_worker(state, worker_code):
                 return worker_code
         else:
-            if self.seed_create_auto(worker_code):
-                self.last_seed_action = worker_code
+            if self._seed_create_worker(state, worker_code):
                 return worker_code
-            if self._seed_move_auto():
-                self.last_seed_action = config.SEED_ACTION_MOVE
+            if self._seed_move_auto(state):
                 return config.SEED_ACTION_MOVE
 
-        self.last_seed_action = 0
-        return 0
+        return config.SEED_ACTION_NONE
+
+    def seed_step(self) -> int:
+        """Одно действие первого семени за тик (совместимость и отладка)."""
+        self._sync_seeds()
+        if not self.seeds:
+            return config.SEED_ACTION_NONE
+        state = self.seeds[0]
+        if not self._seed_valid(state):
+            return config.SEED_ACTION_NONE
+        self._ensure_bfs_for_action()
+        self._refresh_org_counts()
+        action = self._seed_action(state)
+        self.last_seed_action = action
+        return action
+
+    def seed_step_all(self) -> int:
+        """Дать по одному действию каждому семени текущего тика.
+
+        Список семян фиксируется до начала фазы: потомки, появившиеся от
+        отстрела или размножения, начнут действовать только со следующего тика.
+        """
+        self._sync_seeds()
+        if not self.seeds:
+            return 0
+        self._ensure_bfs_for_action()
+        self._refresh_org_counts()
+
+        acted = 0
+        self._seed_phase = True
+        try:
+            for state in list(self.seeds):
+                if not self._seed_valid(state):
+                    continue
+                action = self._seed_action(state)
+                if action != config.SEED_ACTION_NONE:
+                    acted += 1
+                    self.last_seed_action = action
+        finally:
+            self._seed_phase = False
+        return acted
 
     def tick(self) -> int:
         f = self.field
         self._ensure_scratch()
-        if not self._seed_valid():
-            self.refresh_seed()
+        self._sync_seeds()
         if self.dirty:
             self.rebuild_bfs()
         if self.workers_dirty:
@@ -322,6 +661,7 @@ class Simulation:
             f.cell_type,
             f.capacity,
             f.dist_seed,
+            f.organism_id,
             self.worker_idx,
             self.worker_count,
             config.GREEN,
@@ -365,7 +705,9 @@ class Simulation:
             self.prune_workers()
 
         if self.seed_actions_enabled:
-            self.seed_step()
+            # BFS остаётся валидным: смерть убирает работников, а не стебли.
+            # Пересборка произойдёт в начале следующего тика (dirty).
+            self.seed_step_all()
 
         self.tick_count += 1
         f.touch()
@@ -377,11 +719,26 @@ class Simulation:
         f = self.field
         counts = np.bincount(f.cell_type.ravel(), minlength=len(config.CELL_NAMES))
         seed_energy = 0.0
-        if self._seed_valid():
-            seed_energy = float(f.energy[self.seed_y, self.seed_x])
+        for state in self.seeds:
+            if self._seed_valid(state):
+                seed_energy += float(f.energy[state.y, state.x])
+
+        occupied = f.cell_type != config.EMPTY
+        if occupied.any():
+            organism_count = int(np.unique(f.organism_id[occupied]).size)
+        else:
+            organism_count = 0
+
+        generations = [state.generation for state in self.seeds]
         return {
             "tick": self.tick_count,
             "seed_energy": seed_energy,
+            "seed_count": len(self.seeds),
+            "organism_count": organism_count,
+            "generation_max": max(generations, default=0),
+            "generation_avg": (
+                sum(generations) / len(generations) if generations else 0.0
+            ),
             "total_energy": float(f.energy.sum()),
             "counts": {code: int(counts[code]) for code in config.CELL_NAMES},
             "dirty": self.dirty,

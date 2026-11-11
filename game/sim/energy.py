@@ -13,29 +13,37 @@ def build_bfs(
     dist_seed: np.ndarray,
     parent_dir: np.ndarray,
     queue: np.ndarray,
-    seed_y: int,
-    seed_x: int,
-    org_id: int,
+    seed_idx: np.ndarray,
+    seed_count: int,
     stem_code: int,
+    seed_code: int,
 ) -> int:
-    """BFS от семени по стеблям одного организма.
+    """Мульти-источниковый BFS от всех семян по стеблям их организмов.
 
-    dist_seed: 0 у семени, >0 у стеблей, -1 у всего остального.
+    Каждое семя даёт dist_seed = 0. Дальше BFS идёт только по стеблям с тем же
+    `organism_id`, поэтому организмы не смешиваются, а несколько семян одного
+    организма работают как несколько источников.
+
+    dist_seed: 0 у семян, >0 у стеблей, -1 у всего остального.
     parent_dir: направление от клетки к родителю (0 вверх, 1 вниз, 2 влево, 3 вправо).
-    Возвращает число посещённых клеток (включая семя).
+    Возвращает число посещённых клеток (семена + стебли).
     """
     dist_seed.fill(-1)
     parent_dir.fill(-1)
 
     h, w = cell_type.shape
-    if seed_y < 0 or seed_x < 0:
-        return 0
-
     head = 0
     tail = 0
-    dist_seed[seed_y, seed_x] = 0
-    queue[tail] = seed_y * w + seed_x
-    tail += 1
+
+    for k in range(seed_count):
+        idx = seed_idx[k]
+        y = idx // w
+        x = idx - y * w
+        if cell_type[y, x] != seed_code or dist_seed[y, x] != -1:
+            continue
+        dist_seed[y, x] = 0
+        queue[tail] = idx
+        tail += 1
 
     while head < tail:
         idx = queue[head]
@@ -43,6 +51,7 @@ def build_bfs(
         y = idx // w
         x = idx - y * w
         d = dist_seed[y, x]
+        org_id = organism_id[y, x]
 
         # вверх: сосед сверху, родитель для него — вниз (1)
         ny = y - 1
@@ -179,6 +188,7 @@ def inject_workers(
     cell_type: np.ndarray,
     capacity: np.ndarray,
     dist_seed: np.ndarray,
+    organism_id: np.ndarray,
     worker_idx: np.ndarray,
     worker_count: int,
     green_code: int,
@@ -186,7 +196,7 @@ def inject_workers(
     blue_code: int,
     stem_code: int,
 ) -> None:
-    """Работники отдают энергию только соседним стеблям.
+    """Работники отдают энергию только соседним стеблям своего организма.
 
     Семя в инъекции не участвует: прямой передачи работник -> семя нет.
     """
@@ -203,6 +213,8 @@ def inject_workers(
         if current <= 0.0:
             continue
 
+        org_id = organism_id[y, x]
+
         best_y = -1
         best_x = -1
         best_dist = 2147483647
@@ -212,7 +224,11 @@ def inject_workers(
         ny = y - 1
         if ny < 0:
             ny = h - 1
-        if cell_type[ny, x] == stem_code and dist_seed[ny, x] >= 0:
+        if (
+            cell_type[ny, x] == stem_code
+            and dist_seed[ny, x] >= 0
+            and organism_id[ny, x] == org_id
+        ):
             free = capacity[ny, x] - energy[ny, x]
             if free > 0.0 and dist_seed[ny, x] < best_dist:
                 best_y, best_x = ny, x
@@ -223,7 +239,11 @@ def inject_workers(
         ny = y + 1
         if ny >= h:
             ny = 0
-        if cell_type[ny, x] == stem_code and dist_seed[ny, x] >= 0:
+        if (
+            cell_type[ny, x] == stem_code
+            and dist_seed[ny, x] >= 0
+            and organism_id[ny, x] == org_id
+        ):
             free = capacity[ny, x] - energy[ny, x]
             if free > 0.0 and dist_seed[ny, x] < best_dist:
                 best_y, best_x = ny, x
@@ -234,7 +254,11 @@ def inject_workers(
         nx = x - 1
         if nx < 0:
             nx = w - 1
-        if cell_type[y, nx] == stem_code and dist_seed[y, nx] >= 0:
+        if (
+            cell_type[y, nx] == stem_code
+            and dist_seed[y, nx] >= 0
+            and organism_id[y, nx] == org_id
+        ):
             free = capacity[y, nx] - energy[y, nx]
             if free > 0.0 and dist_seed[y, nx] < best_dist:
                 best_y, best_x = y, nx
@@ -245,7 +269,11 @@ def inject_workers(
         nx = x + 1
         if nx >= w:
             nx = 0
-        if cell_type[y, nx] == stem_code and dist_seed[y, nx] >= 0:
+        if (
+            cell_type[y, nx] == stem_code
+            and dist_seed[y, nx] >= 0
+            and organism_id[y, nx] == org_id
+        ):
             free = capacity[y, nx] - energy[y, nx]
             if free > 0.0 and dist_seed[y, nx] < best_dist:
                 best_y, best_x = y, nx

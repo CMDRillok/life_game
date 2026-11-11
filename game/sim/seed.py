@@ -40,8 +40,9 @@ def _neighbor(x: int, y: int, direction: int, h: int, w: int) -> tuple[int, int]
 @njit(cache=True)
 def find_worker_target(
     cell_type: np.ndarray,
-    queue: np.ndarray,
-    queue_count: int,
+    stem_queue: np.ndarray,
+    start: int,
+    end: int,
     green_code: int,
     orange_code: int,
     blue_code: int,
@@ -49,20 +50,18 @@ def find_worker_target(
     empty_code: int,
     direction_offset: int,
 ) -> tuple[int, int, int]:
-    """Найти пустую клетку для работника рядом со стеблем (4 направления).
+    """Найти пустую клетку для работника рядом со стеблем организма.
 
+    `stem_queue[start:end]` — стебли только этого организма в обратном порядке
+    BFS: сначала самые дальние от семени, чтобы организм рос наружу.
     Дополнительно проверяется запрет соседства с другими работниками по
-    8 направлениям.
-
-    Стебли перебираются в обратном порядке BFS: сначала самые дальние от семени,
-    чтобы организм рос наружу. Направления обходятся с поворотом на
-    direction_offset, чтобы рост не сваливался в одну сторону.
+    8 направлениям. Направления обходятся с поворотом на direction_offset.
 
     Возвращает (found, y, x).
     """
     h, w = cell_type.shape
-    for i in range(queue_count - 1, 0, -1):
-        idx = queue[i]
+    for i in range(start, end):
+        idx = stem_queue[i]
         sy = idx // w
         sx = idx - sy * w
         if cell_type[sy, sx] != stem_code:
@@ -119,4 +118,88 @@ def find_move_target(
         ny, nx = _neighbor(seed_x, seed_y, direction, h, w)
         if cell_type[ny, nx] == empty_code:
             return 1, ny, nx
+    return 0, 0, 0
+
+
+@njit(cache=True)
+def find_seed_target(
+    cell_type: np.ndarray,
+    stem_queue: np.ndarray,
+    start: int,
+    end: int,
+    stem_code: int,
+    empty_code: int,
+    direction_offset: int,
+) -> tuple[int, int, int]:
+    """Найти пустую клетку рядом со стеблем организма.
+
+    `stem_queue[start:end]` — стебли только этого организма в обратном
+    порядке BFS. Используется внутренним размножением семени: новое семя
+    должно попасть в сеть стеблей, чтобы сразу получать энергию. Работники
+    при этом не учитываются — рядом с семенем им стоять можно.
+    """
+    h, w = cell_type.shape
+    for i in range(start, end):
+        idx = stem_queue[i]
+        sy = idx // w
+        sx = idx - sy * w
+        if cell_type[sy, sx] != stem_code:
+            continue
+
+        for k in range(4):
+            direction = (k + direction_offset) & 3
+            ny, nx = _neighbor(sx, sy, direction, h, w)
+            if cell_type[ny, nx] == empty_code:
+                return 1, ny, nx
+
+    return 0, 0, 0
+
+
+@njit(cache=True)
+def find_shoot_target(
+    cell_type: np.ndarray,
+    seed_y: int,
+    seed_x: int,
+    radius: int,
+    empty_code: int,
+) -> tuple[int, int, int]:
+    """Найти пустую клетку для отстрела нового организма.
+
+    Кольца перебираются от внешнего радиуса к внутреннему, поэтому потомок
+    улетает как можно дальше, но всё ещё в пределах `radius` по Чебышёву.
+    Внутри кольца направление обхода зависит от координат, чтобы отстрел
+    не сваливался всегда в одну сторону.
+    """
+    h, w = cell_type.shape
+    if radius < 1:
+        return 0, 0, 0
+
+    for r in range(radius, 0, -1):
+        start = (seed_x + seed_y + r) & 3
+        for k in range(8 * r):
+            shift = (k + start * (2 * r)) % (8 * r)
+            side = shift // (2 * r)
+            step = shift % (2 * r)
+            if side == 0:
+                dy, dx = -r, -r + step
+            elif side == 1:
+                dy, dx = -r + step, r
+            elif side == 2:
+                dy, dx = r, r - step
+            else:
+                dy, dx = r - step, -r
+
+            ny = seed_y + dy
+            if ny < 0:
+                ny += h
+            elif ny >= h:
+                ny -= h
+            nx = seed_x + dx
+            if nx < 0:
+                nx += w
+            elif nx >= w:
+                nx -= w
+            if cell_type[ny, nx] == empty_code:
+                return 1, ny, nx
+
     return 0, 0, 0
