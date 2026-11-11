@@ -215,30 +215,38 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
             # resize -> set_mode -> resize (особенно в тайловых WM вроде Hyprland).
 
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+                # Используем физические scancode, а не layout-зависимый key:
+                # иначе R/N не срабатывают в русской раскладке.
+                if event.scancode == pygame.KSCAN_ESCAPE:
                     running = False
-                elif event.key == pygame.K_1:
+                elif event.scancode == pygame.KSCAN_1:
                     view_mode, view_index = config.VIEW_CELLS, 0
-                elif event.key == pygame.K_2:
+                elif event.scancode == pygame.KSCAN_2:
                     view_mode, view_index = config.VIEW_ORGANIC, 1
-                elif event.key == pygame.K_3:
+                elif event.scancode == pygame.KSCAN_3:
                     view_mode, view_index = config.VIEW_ENERGY, 2
-                elif event.key == pygame.K_4:
+                elif event.scancode == pygame.KSCAN_4:
                     view_mode, view_index = config.VIEW_CELL_ENERGY, 3
-                elif event.key == pygame.K_TAB:
+                elif event.scancode == pygame.KSCAN_TAB:
                     view_index = (view_index + 1) % len(config.VIEW_ORDER)
                     view_mode = config.VIEW_ORDER[view_index]
-                elif event.key == pygame.K_SPACE:
+                elif event.scancode == pygame.KSCAN_SPACE:
                     paused = not paused
                     accumulator = 0.0
-                elif event.key == pygame.K_n:
+                elif (
+                    event.scancode == pygame.KSCAN_N
+                    or event.key == pygame.K_n
+                ):
                     single_tick = True
                     accumulator = 0.0
-                elif event.key == pygame.K_PAGEUP:
+                elif event.scancode == pygame.KSCAN_PAGEUP:
                     sim_hz = min(1000.0, sim_hz * 1.25)
-                elif event.key == pygame.K_PAGEDOWN:
+                elif event.scancode == pygame.KSCAN_PAGEDOWN:
                     sim_hz = max(0.1, sim_hz / 1.25)
-                elif event.key == pygame.K_r:
+                elif (
+                    event.scancode == pygame.KSCAN_R
+                    or event.key == pygame.K_r
+                ):
                     field = create_field(args)
                     sim = Simulation(field)
                     renderer.invalidate()
@@ -254,16 +262,16 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
                     sim_stats["sim_hz"] = 0.0
                     sim_stats["paused"] = paused
                     print("симуляция перезапущена")
-                elif event.key == pygame.K_RIGHTBRACKET:
+                elif event.scancode == pygame.KSCAN_RIGHTBRACKET:
                     field.resize(field.width + config.RESIZE_STEP, field.height)
                     sim.on_field_changed()
-                elif event.key == pygame.K_LEFTBRACKET:
+                elif event.scancode == pygame.KSCAN_LEFTBRACKET:
                     field.resize(max(16, field.width - config.RESIZE_STEP), field.height)
                     sim.on_field_changed()
-                elif event.key == pygame.K_EQUALS:
+                elif event.scancode == pygame.KSCAN_EQUALS:
                     field.resize(field.width, field.height + config.RESIZE_STEP)
                     sim.on_field_changed()
-                elif event.key == pygame.K_MINUS:
+                elif event.scancode == pygame.KSCAN_MINUS:
                     field.resize(field.width, max(16, field.height - config.RESIZE_STEP))
                     sim.on_field_changed()
 
@@ -317,12 +325,12 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
             sim_stats["paused"] = paused
 
         keys = pygame.key.get_pressed()
-        dx = float(keys[pygame.K_d] or keys[pygame.K_RIGHT]) - float(
-            keys[pygame.K_a] or keys[pygame.K_LEFT]
-        )
-        dy = float(keys[pygame.K_s] or keys[pygame.K_DOWN]) - float(
-            keys[pygame.K_w] or keys[pygame.K_UP]
-        )
+        dx = float(
+            keys[pygame.KSCAN_D] or keys[pygame.KSCAN_RIGHT]
+        ) - float(keys[pygame.KSCAN_A] or keys[pygame.KSCAN_LEFT])
+        dy = float(
+            keys[pygame.KSCAN_S] or keys[pygame.KSCAN_DOWN]
+        ) - float(keys[pygame.KSCAN_W] or keys[pygame.KSCAN_UP])
         if dx or dy:
             camera.move_pixels(
                 dx * config.KEY_PAN_SPEED * dt,
