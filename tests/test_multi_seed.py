@@ -87,7 +87,7 @@ class OrganismIsolationTests(unittest.TestCase):
         # Чужой стебель достижим для своего семени (dist >= 0), но работник
         # другого организма не имеет права в него вливать энергию.
         self.assertGreaterEqual(int(field.dist_seed[2, 3]), 0)
-        gain = config.GREEN_RATE * (1.0 - config.GREEN_CROWD_PENALTY)
+        gain = config.GREEN_RATE
         self.assertAlmostEqual(float(field.energy[2, 2]), gain, places=5)
         self.assertAlmostEqual(float(field.energy[2, 3]), 0.0, places=5)
 
@@ -101,7 +101,7 @@ class OrganismIsolationTests(unittest.TestCase):
         sim.tick()
 
         # Энергия прошла работник -> стебель -> семя за один тик.
-        gain = config.GREEN_RATE * (1.0 - config.GREEN_CROWD_PENALTY)
+        gain = config.GREEN_RATE
         self.assertAlmostEqual(float(field.energy[2, 2]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[2, 3]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[2, 4]), gain, places=5)

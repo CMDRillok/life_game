@@ -119,8 +119,8 @@ class InjectionTests(unittest.TestCase):
         sim = Simulation(field, seed_actions=False)
         sim.tick()
 
-        # Два 8-соседа (оба стебля) снижают производство до 6/8 от GREEN_RATE.
-        gain = config.GREEN_RATE * (1.0 - 2 * config.GREEN_CROWD_PENALTY)
+        # Соседние стебли не считаются листьями и не снижают производство.
+        gain = config.GREEN_RATE
         self.assertAlmostEqual(float(field.energy[4, 1]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[4, 2]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[3, 2]), 10.0 + gain, places=5)
@@ -133,7 +133,7 @@ class InjectionTests(unittest.TestCase):
         sim = Simulation(field, seed_actions=False)
         sim.tick()
 
-        gain = config.GREEN_RATE * (1.0 - config.GREEN_CROWD_PENALTY)
+        gain = config.GREEN_RATE
         self.assertAlmostEqual(float(field.energy[2, 2]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[3, 2]), gain, places=5)
 

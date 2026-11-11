@@ -907,8 +907,8 @@ class Simulation:
             config.BLUE_MAX_INTAKE,
             config.BLUE_EFFICIENCY,
             config.RESOURCE_RADIUS,
-            config.GREEN_CROWD_PENALTY,
-            config.EMPTY,
+            config.GREEN_NEIGHBOR_EFFICIENCY[1],
+            config.GREEN_NEIGHBOR_EFFICIENCY[2],
         )
 
         energy_kernels.inject_workers(

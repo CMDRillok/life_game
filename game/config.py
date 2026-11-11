@@ -34,8 +34,9 @@ MAX_TICKS_PER_FRAME = 4
 STATS_INTERVAL = 0.25  # как часто пересчитывать статистику для HUD
 
 GREEN_RATE = 2.0
-# Каждый непустой 8-сосед снижает эффективность зелёной на 1/8.
-GREEN_CROWD_PENALTY = 1.0 / 8.0
+# Эффективность зелёной по числу соседних зелёных клеток (8 направлений):
+# 0 -> 100%, 1 -> 50%, 2 -> 10%, 3 и больше -> 0%.
+GREEN_NEIGHBOR_EFFICIENCY = (1.0, 0.5, 0.1)
 ORANGE_MAX_INTAKE = 2.0
 ORANGE_EFFICIENCY = 1.0
 BLUE_MAX_INTAKE = 2.0

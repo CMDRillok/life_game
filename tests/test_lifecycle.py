@@ -56,21 +56,45 @@ class GreenCrowdTests(unittest.TestCase):
             float(field.energy[5, 5]), config.GREEN_RATE, places=5
         )
 
-    def test_green_loses_eighth_per_neighbor(self) -> None:
+    def test_one_leaf_neighbor_halves_production(self) -> None:
         field = make_field()
-        put_worker(field, 5, 5, config.GREEN)
-        for x, y in ((5, 4), (5, 6), (4, 5), (6, 5)):
-            put_stem(field, x, y)
+        put_worker(field, 5, 5, config.GREEN, org=1)
+        put_worker(field, 6, 5, config.GREEN, org=2)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
 
-        expected = config.GREEN_RATE * (
-            1.0 - 4 * config.GREEN_CROWD_PENALTY
-        )
+        expected = config.GREEN_RATE * config.GREEN_NEIGHBOR_EFFICIENCY[1]
         self.assertAlmostEqual(float(field.energy[5, 5]), expected, places=5)
+        self.assertAlmostEqual(float(field.energy[5, 6]), expected, places=5)
 
-    def test_green_surrounded_by_eight_neighbors_produces_nothing(self) -> None:
+    def test_two_leaf_neighbors_leave_ten_percent(self) -> None:
+        field = make_field()
+        put_worker(field, 5, 5, config.GREEN)
+        put_worker(field, 5, 4, config.GREEN)
+        put_worker(field, 5, 6, config.GREEN)
+
+        sim = Simulation(field, seed_actions=False)
+        sim.tick()
+
+        expected = config.GREEN_RATE * config.GREEN_NEIGHBOR_EFFICIENCY[2]
+        self.assertAlmostEqual(float(field.energy[5, 5]), expected, places=5)
+        self.assertAlmostEqual(
+            float(field.energy[5, 5]), config.GREEN_RATE * 0.1, places=5
+        )
+
+    def test_three_leaf_neighbors_produce_nothing(self) -> None:
+        field = make_field()
+        put_worker(field, 5, 5, config.GREEN)
+        for x, y in ((5, 4), (5, 6), (4, 5)):
+            put_worker(field, x, y, config.GREEN)
+
+        sim = Simulation(field, seed_actions=False)
+        sim.tick()
+
+        self.assertAlmostEqual(float(field.energy[5, 5]), 0.0, places=5)
+
+    def test_stems_and_seeds_do_not_count_as_leaves(self) -> None:
         field = make_field()
         put_worker(field, 5, 5, config.GREEN)
         for dy in (-1, 0, 1):
@@ -83,7 +107,9 @@ class GreenCrowdTests(unittest.TestCase):
         sim.tick()
 
         self.assertEqual(int(field.cell_type[5, 5]), config.GREEN)
-        self.assertAlmostEqual(float(field.energy[5, 5]), 0.0, places=5)
+        self.assertAlmostEqual(
+            float(field.energy[5, 5]), config.GREEN_RATE, places=5
+        )
 
 
 class SeedUpkeepTests(unittest.TestCase):
