@@ -5,13 +5,13 @@ from __future__ import annotations
 import numpy as np
 
 # --- стартовое поле ---
-WIDTH = 2000
-HEIGHT = 2000
+WIDTH = 4000
+HEIGHT = 4000
 TILE = 24  # пикселей на клетку при zoom == 1
 
 # Стартовый мир: пустая почва и множество одиночных семян.
 # Эти значения можно менять перед запуском.
-START_SEED_COUNT = 300
+START_SEED_COUNT = 1000
 START_SEED_ENERGY = 400.0
 # Разброс стартовых геномов вокруг базового (доля полного диапазона гена).
 START_GENOME_SPREAD = 0.35
