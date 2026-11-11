@@ -161,8 +161,9 @@ class SeedUpkeepTests(unittest.TestCase):
         self.assertEqual(int(field.cell_type[3, 3]), config.EMPTY)
         self.assertEqual(len(sim.seeds), 0)
         self.assertAlmostEqual(
-            float(field.organic[3, 3]), config.DEATH_ORGANIC, places=5
+            float(field.organic[2:5, 2:5].sum()), config.DEATH_ORGANIC, places=4
         )
+        self.assertTrue((field.organic[2:5, 2:5] > 0.0).all())
         # 1.0 энергии рассеялась по 3x3.
         self.assertAlmostEqual(float(field.soil_energy.sum()), 1.0, places=4)
 
@@ -187,8 +188,9 @@ class LifetimeTests(unittest.TestCase):
 
         self.assertEqual(int(field.cell_type[4, 4]), config.EMPTY)
         self.assertAlmostEqual(
-            float(field.organic[4, 4]), config.DEATH_ORGANIC, places=5
+            float(field.organic[3:6, 3:6].sum()), config.DEATH_ORGANIC, places=4
         )
+        self.assertTrue((field.organic[3:6, 3:6] > 0.0).all())
         self.assertAlmostEqual(float(field.soil_energy.sum()), 9.0, places=4)
 
     def test_tail_without_workers_is_pruned_to_seed_buffer(self) -> None:
@@ -354,12 +356,12 @@ class TravelTests(unittest.TestCase):
         self.assertEqual(len(sim.seeds), 0)
         self.assertEqual(int(field.cell_type[4, 4]), config.EMPTY)
         self.assertEqual(int(field.cell_type[5, 4]), config.EMPTY)
+        # Погибли две клетки, каждая оставила 10 органики в своей 3x3.
         self.assertAlmostEqual(
-            float(field.organic[4, 4]), config.DEATH_ORGANIC, places=5
+            float(field.organic.sum()), 2.0 * config.DEATH_ORGANIC, places=4
         )
-        self.assertAlmostEqual(
-            float(field.organic[5, 4]), config.DEATH_ORGANIC, places=5
-        )
+        self.assertGreater(float(field.organic[4, 4]), 0.0)
+        self.assertGreater(float(field.organic[5, 4]), 0.0)
         self.assertAlmostEqual(float(field.soil_energy.sum()), 57.0, places=4)
 
 

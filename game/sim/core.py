@@ -196,16 +196,17 @@ class Simulation:
 
         self._ensure_alive()
         spill = float(f.energy[y, x])
-        if spill > 0.0:
-            side = config.RESOURCE_RADIUS * 2 + 1
-            part = spill / (side * side)
-            for dy in range(-config.RESOURCE_RADIUS, config.RESOURCE_RADIUS + 1):
-                ny = (y + dy) % f.height
-                for dx in range(-config.RESOURCE_RADIUS, config.RESOURCE_RADIUS + 1):
-                    nx = (x + dx) % f.width
-                    f.soil_energy[ny, nx] += part
+        side = config.RESOURCE_RADIUS * 2 + 1
+        area = side * side
+        energy_part = spill / area if spill > 0.0 else 0.0
+        organic_part = config.DEATH_ORGANIC / area
+        for dy in range(-config.RESOURCE_RADIUS, config.RESOURCE_RADIUS + 1):
+            ny = (y + dy) % f.height
+            for dx in range(-config.RESOURCE_RADIUS, config.RESOURCE_RADIUS + 1):
+                nx = (x + dx) % f.width
+                f.soil_energy[ny, nx] += energy_part
+                f.organic[ny, nx] += organic_part
 
-        f.organic[y, x] += config.DEATH_ORGANIC
         f.cell_type[y, x] = config.EMPTY
         f.energy[y, x] = 0.0
         f.capacity[y, x] = 0.0

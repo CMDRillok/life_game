@@ -405,16 +405,17 @@ def prune_dead_stems(
 
             if remove:
                 spill = energy[y, x]
-                if spill > 0.0:
-                    side = radius * 2 + 1
-                    part = spill / (side * side)
-                    for dy in range(-radius, radius + 1):
-                        ny = _wrap(y + dy, h)
-                        for dx in range(-radius, radius + 1):
-                            nx = _wrap(x + dx, w)
-                            soil_energy[ny, nx] += part
+                side = radius * 2 + 1
+                area = side * side
+                energy_part = spill / area if spill > 0.0 else 0.0
+                organic_part = death_organic / area
+                for dy in range(-radius, radius + 1):
+                    ny = _wrap(y + dy, h)
+                    for dx in range(-radius, radius + 1):
+                        nx = _wrap(x + dx, w)
+                        soil_energy[ny, nx] += energy_part
+                        organic[ny, nx] += organic_part
 
-                organic[y, x] += death_organic
                 cell_type[y, x] = empty_code
                 energy[y, x] = 0.0
                 capacity[y, x] = 0.0
@@ -501,16 +502,17 @@ def apply_deaths(
             continue
 
         spill = energy[y, x]
-        if spill > 0.0:
-            side = radius * 2 + 1
-            part = spill / (side * side)
-            for dy in range(-radius, radius + 1):
-                ny = _wrap(y + dy, h)
-                for dx in range(-radius, radius + 1):
-                    nx = _wrap(x + dx, w)
-                    soil_energy[ny, nx] += part
+        side = radius * 2 + 1
+        area = side * side
+        energy_part = spill / area if spill > 0.0 else 0.0
+        organic_part = death_organic / area
+        for dy in range(-radius, radius + 1):
+            ny = _wrap(y + dy, h)
+            for dx in range(-radius, radius + 1):
+                nx = _wrap(x + dx, w)
+                soil_energy[ny, nx] += energy_part
+                organic[ny, nx] += organic_part
 
-        organic[y, x] += death_organic
         cell_type[y, x] = empty_code
         energy[y, x] = 0.0
         capacity[y, x] = 0.0

@@ -101,14 +101,15 @@ class FlowTests(unittest.TestCase):
         put_stem(field, 1, 0)
         put_stem(field, 8, 8, energy=50.0)  # оторван от семени
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         # Оторванный от семени стебель никуда не ведёт и удаляется.
         self.assertEqual(int(field.cell_type[8, 8]), config.EMPTY)
         self.assertAlmostEqual(
-            float(field.organic[8, 8]), config.DEATH_ORGANIC, places=5
+            float(field.organic.sum()), config.DEATH_ORGANIC, places=4
         )
+        self.assertTrue((field.organic[7:10, 7:10] > 0.0).all())
         self.assertAlmostEqual(float(field.soil_energy.sum()), 50.0, places=4)
 
 
@@ -196,8 +197,9 @@ class DeathTests(unittest.TestCase):
         self.assertEqual(died, 1)
         self.assertEqual(int(field.cell_type[3, 3]), config.EMPTY)
         self.assertAlmostEqual(
-            float(field.organic[3, 3]), config.DEATH_ORGANIC, places=5
+            float(field.organic[2:5, 2:5].sum()), config.DEATH_ORGANIC, places=4
         )
+        self.assertTrue((field.organic[2:5, 2:5] > 0.0).all())
 
     def test_blue_dies_without_soil_energy_and_energy(self) -> None:
         field = make_field(7, 7)
@@ -209,8 +211,9 @@ class DeathTests(unittest.TestCase):
         self.assertEqual(died, 1)
         self.assertEqual(int(field.cell_type[3, 3]), config.EMPTY)
         self.assertAlmostEqual(
-            float(field.organic[3, 3]), config.DEATH_ORGANIC, places=5
+            float(field.organic[2:5, 2:5].sum()), config.DEATH_ORGANIC, places=4
         )
+        self.assertTrue((field.organic[2:5, 2:5] > 0.0).all())
 
     def test_orange_with_stored_energy_survives(self) -> None:
         field = make_field(7, 7)
