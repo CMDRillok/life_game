@@ -95,7 +95,7 @@ class FlowTests(unittest.TestCase):
         self.assertAlmostEqual(float(field.energy[0, 0]), config.SEED_CAPACITY, places=5)
         self.assertAlmostEqual(float(field.energy[0, 1]), 45.0, places=5)
 
-    def test_detached_stem_does_not_flow(self) -> None:
+    def test_detached_stem_is_pruned(self) -> None:
         field = make_field(12, 12)
         put_seed(field, 0, 0)
         put_stem(field, 1, 0)
@@ -104,8 +104,12 @@ class FlowTests(unittest.TestCase):
         sim = Simulation(field)
         sim.tick()
 
-        self.assertEqual(int(field.dist_seed[8, 8]), -1)
-        self.assertAlmostEqual(float(field.energy[8, 8]), 50.0, places=5)
+        # Оторванный от семени стебель никуда не ведёт и удаляется.
+        self.assertEqual(int(field.cell_type[8, 8]), config.EMPTY)
+        self.assertAlmostEqual(
+            float(field.organic[8, 8]), config.DEATH_ORGANIC, places=5
+        )
+        self.assertAlmostEqual(float(field.soil_energy.sum()), 50.0, places=4)
 
 
 class InjectionTests(unittest.TestCase):

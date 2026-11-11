@@ -165,6 +165,278 @@ def produce(
 
 
 @njit(cache=True)
+def prune_dead_stems(
+    cell_type: np.ndarray,
+    energy: np.ndarray,
+    organic: np.ndarray,
+    soil_energy: np.ndarray,
+    capacity: np.ndarray,
+    organism_id: np.ndarray,
+    dist_seed: np.ndarray,
+    die_at: np.ndarray,
+    alive_idx: np.ndarray,
+    alive_pos: np.ndarray,
+    alive_count: int,
+    stem_degree: np.ndarray,
+    prune_queue: np.ndarray,
+    tick: int,
+    grace: int,
+    stem_code: int,
+    empty_code: int,
+    death_organic: float,
+    radius: int,
+) -> tuple[int, int]:
+    """Удалить стебли, которые никуда не ведут.
+
+    Стебель полезен, если он соединён с семенем и либо сам примыкает к
+    семени/работнику, либо лежит на пути к другому полезному стеблю.
+    Листья, у которых на конце ничего нет, помечаются каскадом. Стебли без
+    пути к семени (`dist_seed < 0`) удаляются сразу: организм остался без
+    семени. Живым тупикам даётся `grace` тиков, чтобы семя успело построить
+    работника и превратить ветвь в полезную.
+
+    Состояние степени кодируется в `stem_degree`:
+    0..4 — обычный стебель, 8..12 — в очереди, -1 — тупик, -2 — полезный.
+    """
+    h, w = cell_type.shape
+    queue = prune_queue
+    head = 0
+    tail = 0
+
+    # Первый проход: степени и начальные кандидаты на удаление.
+    for i in range(alive_count):
+        idx = alive_idx[i]
+        y = idx // w
+        x = idx - y * w
+        if cell_type[y, x] != stem_code:
+            continue
+        org = organism_id[y, x]
+        degree = 0
+        attached = False
+
+        ny = _wrap(y - 1, h)
+        ncode = cell_type[ny, x]
+        if ncode == stem_code:
+            if organism_id[ny, x] == org:
+                degree += 1
+        elif ncode != empty_code and organism_id[ny, x] == org:
+            attached = True
+
+        ny = _wrap(y + 1, h)
+        ncode = cell_type[ny, x]
+        if ncode == stem_code:
+            if organism_id[ny, x] == org:
+                degree += 1
+        elif ncode != empty_code and organism_id[ny, x] == org:
+            attached = True
+
+        nx = _wrap(x - 1, w)
+        ncode = cell_type[y, nx]
+        if ncode == stem_code:
+            if organism_id[y, nx] == org:
+                degree += 1
+        elif ncode != empty_code and organism_id[y, nx] == org:
+            attached = True
+
+        nx = _wrap(x + 1, w)
+        ncode = cell_type[y, nx]
+        if ncode == stem_code:
+            if organism_id[y, nx] == org:
+                degree += 1
+        elif ncode != empty_code and organism_id[y, nx] == org:
+            attached = True
+
+        stem_degree[y, x] = degree
+        if dist_seed[y, x] < 0 or (not attached and degree <= 1):
+            stem_degree[y, x] = degree + 8
+            queue[tail] = idx
+            tail += 1
+
+    # Каскад: удаляем бесполезные листья, пока дерево не стабилизируется.
+    while head < tail:
+        idx = queue[head]
+        head += 1
+        y = idx // w
+        x = idx - y * w
+        if cell_type[y, x] != stem_code:
+            continue
+        state = stem_degree[y, x]
+        if state < 8:
+            continue
+        degree = state - 8
+        org = organism_id[y, x]
+
+        attached = False
+        ny = _wrap(y - 1, h)
+        ncode = cell_type[ny, x]
+        if (
+            ncode != empty_code
+            and ncode != stem_code
+            and organism_id[ny, x] == org
+        ):
+            attached = True
+        else:
+            ny = _wrap(y + 1, h)
+            ncode = cell_type[ny, x]
+            if (
+                ncode != empty_code
+                and ncode != stem_code
+                and organism_id[ny, x] == org
+            ):
+                attached = True
+            else:
+                nx = _wrap(x - 1, w)
+                ncode = cell_type[y, nx]
+                if (
+                    ncode != empty_code
+                    and ncode != stem_code
+                    and organism_id[y, nx] == org
+                ):
+                    attached = True
+                else:
+                    nx = _wrap(x + 1, w)
+                    ncode = cell_type[y, nx]
+                    if (
+                        ncode != empty_code
+                        and ncode != stem_code
+                        and organism_id[y, nx] == org
+                    ):
+                        attached = True
+
+        if not (dist_seed[y, x] < 0 or (not attached and degree <= 1)):
+            stem_degree[y, x] = -2
+            continue
+
+        stem_degree[y, x] = -1
+
+        ny = _wrap(y - 1, h)
+        if cell_type[ny, x] == stem_code and organism_id[ny, x] == org:
+            nidx = ny * w + x
+            nstate = stem_degree[ny, x]
+            if nstate >= 8:
+                if nstate > 8:
+                    stem_degree[ny, x] = nstate - 1
+            elif nstate >= 0:
+                ndegree = nstate - 1
+                if ndegree <= 1:
+                    stem_degree[ny, x] = ndegree + 8
+                    queue[tail] = nidx
+                    tail += 1
+                else:
+                    stem_degree[ny, x] = ndegree
+
+        ny = _wrap(y + 1, h)
+        if cell_type[ny, x] == stem_code and organism_id[ny, x] == org:
+            nidx = ny * w + x
+            nstate = stem_degree[ny, x]
+            if nstate >= 8:
+                if nstate > 8:
+                    stem_degree[ny, x] = nstate - 1
+            elif nstate >= 0:
+                ndegree = nstate - 1
+                if ndegree <= 1:
+                    stem_degree[ny, x] = ndegree + 8
+                    queue[tail] = nidx
+                    tail += 1
+                else:
+                    stem_degree[ny, x] = ndegree
+
+        nx = _wrap(x - 1, w)
+        if cell_type[y, nx] == stem_code and organism_id[y, nx] == org:
+            nidx = y * w + nx
+            nstate = stem_degree[y, nx]
+            if nstate >= 8:
+                if nstate > 8:
+                    stem_degree[y, nx] = nstate - 1
+            elif nstate >= 0:
+                ndegree = nstate - 1
+                if ndegree <= 1:
+                    stem_degree[y, nx] = ndegree + 8
+                    queue[tail] = nidx
+                    tail += 1
+                else:
+                    stem_degree[y, nx] = ndegree
+
+        nx = _wrap(x + 1, w)
+        if cell_type[y, nx] == stem_code and organism_id[y, nx] == org:
+            nidx = y * w + nx
+            nstate = stem_degree[y, nx]
+            if nstate >= 8:
+                if nstate > 8:
+                    stem_degree[y, nx] = nstate - 1
+            elif nstate >= 0:
+                ndegree = nstate - 1
+                if ndegree <= 1:
+                    stem_degree[y, nx] = ndegree + 8
+                    queue[tail] = nidx
+                    tail += 1
+                else:
+                    stem_degree[y, nx] = ndegree
+
+    # Второй проход: удалить помеченные стебли и рассеять их энергию.
+    died = 0
+    i = 0
+    while i < alive_count:
+        idx = alive_idx[i]
+        y = idx // w
+        x = idx - y * w
+        code = cell_type[y, x]
+
+        if code == empty_code:
+            last = alive_idx[alive_count - 1]
+            alive_idx[i] = last
+            alive_pos[last] = i
+            alive_pos[idx] = -1
+            alive_count -= 1
+            continue
+
+        if code == stem_code:
+            remove = False
+            if stem_degree[y, x] == -1:
+                if dist_seed[y, x] < 0:
+                    remove = True
+                elif die_at[y, x] == 0:
+                    die_at[y, x] = tick + grace
+                elif tick >= die_at[y, x]:
+                    remove = True
+            else:
+                # Стебель снова стал полезным — снимаем отложенное удаление.
+                die_at[y, x] = 0
+
+            if remove:
+                spill = energy[y, x]
+                if spill > 0.0:
+                    side = radius * 2 + 1
+                    part = spill / (side * side)
+                    for dy in range(-radius, radius + 1):
+                        ny = _wrap(y + dy, h)
+                        for dx in range(-radius, radius + 1):
+                            nx = _wrap(x + dx, w)
+                            soil_energy[ny, nx] += part
+
+                organic[y, x] += death_organic
+                cell_type[y, x] = empty_code
+                energy[y, x] = 0.0
+                capacity[y, x] = 0.0
+                organism_id[y, x] = 0
+                dist_seed[y, x] = -1
+                die_at[y, x] = 0
+                stem_degree[y, x] = 0
+
+                last = alive_idx[alive_count - 1]
+                alive_idx[i] = last
+                alive_pos[last] = i
+                alive_pos[idx] = -1
+                alive_count -= 1
+                died += 1
+                continue
+
+        i += 1
+
+    return died, alive_count
+
+
+@njit(cache=True)
 def apply_deaths(
     cell_type: np.ndarray,
     energy: np.ndarray,
@@ -182,25 +454,18 @@ def apply_deaths(
     green_code: int,
     orange_code: int,
     blue_code: int,
-    stem_code: int,
-    seed_code: int,
     empty_code: int,
     death_organic: float,
     radius: int,
-    stem_idle_timeout: int,
 ) -> tuple[int, int]:
-    """Убить голодающих/старых работников и стебли-тупики.
+    """Убить голодающих и старых работников.
 
     Обходит только живые клетки из `alive_idx` и сжимает список на месте.
     Энергия умершей клетки равномерно рассеивается в `soil_energy` по области
     (2*radius+1)^2, в собственной клетке остаётся органика.
 
-    Стебель не стареет. Он продлевает жизнь, пока является частью пути
-    (2+ соседних стебля) или к нему прикреплены работник/семя. Тупик без
-    потока энергии умирает после `stem_idle_timeout` тиков простоя.
-
-    Семена сюда не попадают: у них нет срока жизни, они умирают отдельно,
-    когда заканчивается энергия на поддержание.
+    Стебли и семена сюда не попадают: стебли удаляет отдельное ядро
+    `prune_dead_stems`, семена умирают от нехватки энергии на поддержание.
     """
     h, w = cell_type.shape
     died = 0
@@ -221,54 +486,15 @@ def apply_deaths(
             continue
 
         dead = False
-        if code == stem_code:
-            stem_neighbors = 0
-            attached = False
-
-            ny = _wrap(y - 1, h)
-            ncode = cell_type[ny, x]
-            if ncode == stem_code:
-                stem_neighbors += 1
-            elif ncode != empty_code:
-                attached = True
-
-            ny = _wrap(y + 1, h)
-            ncode = cell_type[ny, x]
-            if ncode == stem_code:
-                stem_neighbors += 1
-            elif ncode != empty_code:
-                attached = True
-
-            nx = _wrap(x - 1, w)
-            ncode = cell_type[y, nx]
-            if ncode == stem_code:
-                stem_neighbors += 1
-            elif ncode != empty_code:
-                attached = True
-
-            nx = _wrap(x + 1, w)
-            ncode = cell_type[y, nx]
-            if ncode == stem_code:
-                stem_neighbors += 1
-            elif ncode != empty_code:
-                attached = True
-
-            if attached or stem_neighbors > 1:
-                die_at[y, x] = tick + stem_idle_timeout
-            elif die_at[y, x] == 0:
-                die_at[y, x] = tick + stem_idle_timeout
-            elif tick >= die_at[y, x]:
+        if (code == orange_code or code == blue_code) and produced[y, x] == 0:
+            if energy[y, x] <= 0.0:
                 dead = True
-        else:
-            if (code == orange_code or code == blue_code) and produced[y, x] == 0:
-                if energy[y, x] <= 0.0:
-                    dead = True
-            if (
-                (code == green_code or code == orange_code or code == blue_code)
-                and die_at[y, x] > 0
-                and tick >= die_at[y, x]
-            ):
-                dead = True
+        if (
+            (code == green_code or code == orange_code or code == blue_code)
+            and die_at[y, x] > 0
+            and tick >= die_at[y, x]
+        ):
+            dead = True
 
         if not dead:
             i += 1

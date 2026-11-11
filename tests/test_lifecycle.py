@@ -178,63 +178,107 @@ class SeedUpkeepTests(unittest.TestCase):
 
 
 class LifetimeTests(unittest.TestCase):
-    def test_isolated_stem_dies_after_idle_timeout_and_spills_energy(self) -> None:
+    def test_isolated_stem_is_pruned_and_spills_energy(self) -> None:
         field = make_field()
         put_stem(field, 4, 4, energy=9.0)
 
-        with mock.patch.object(config, "STEM_IDLE_TIMEOUT", 2):
-            sim = Simulation(field, seed_actions=False)
-            sim.tick()
-            sim.tick()
-            self.assertEqual(int(field.cell_type[4, 4]), config.STEM)
+        sim = Simulation(field, seed_actions=False)
+        sim.tick()
 
-            sim.tick()
-            self.assertEqual(int(field.cell_type[4, 4]), config.EMPTY)
+        self.assertEqual(int(field.cell_type[4, 4]), config.EMPTY)
         self.assertAlmostEqual(
             float(field.organic[4, 4]), config.DEATH_ORGANIC, places=5
         )
         self.assertAlmostEqual(float(field.soil_energy.sum()), 9.0, places=4)
 
-    def test_connector_stem_does_not_die_from_time(self) -> None:
+    def test_tail_without_workers_is_pruned_to_seed_buffer(self) -> None:
         field = make_field()
-        for x in (3, 4, 5):
-            put_stem(field, x, 4)
-        field.die_at[4, 4] = 1
-        field.touch()
+        put_seed(field, 0, 0)
+        for x in (1, 2, 3):
+            put_stem(field, x, 0)
 
-        sim = Simulation(field, seed_actions=False)
-        sim.tick()
+        with mock.patch.object(config, "STEM_PRUNE_GRACE", 2):
+            sim = Simulation(field, seed_actions=False)
+            sim.tick()
+            sim.tick()
+            sim.tick()
 
-        # У среднего стебля два соседних стебля: это путь, а не тупик.
-        self.assertEqual(int(field.cell_type[4, 4]), config.STEM)
+        # Хвост без работников отрезается, у семени остаётся буферный стебель.
+        self.assertEqual(int(field.cell_type[0, 1]), config.STEM)
+        self.assertEqual(int(field.cell_type[0, 2]), config.EMPTY)
+        self.assertEqual(int(field.cell_type[0, 3]), config.EMPTY)
 
-    def test_tip_stem_with_attached_worker_does_not_die(self) -> None:
+    def test_side_branch_with_empty_end_is_pruned(self) -> None:
+        field = make_field()
+        put_seed(field, 5, 5)
+        put_stem(field, 5, 6)  # A, примыкает к семени
+        put_stem(field, 6, 6)  # M, главный путь
+        put_worker(field, 7, 6, config.GREEN)  # W, конец главного пути
+        put_stem(field, 4, 6)  # B, боковая ветвь
+        put_stem(field, 3, 6)  # C, пустой конец боковой ветви
+
+        with mock.patch.object(config, "STEM_PRUNE_GRACE", 2):
+            sim = Simulation(field, seed_actions=False)
+            sim.tick()
+            sim.tick()
+            sim.tick()
+
+        # Боковая ветвь B-C никуда не ведёт и удаляется.
+        self.assertEqual(int(field.cell_type[6, 4]), config.EMPTY)
+        self.assertEqual(int(field.cell_type[6, 3]), config.EMPTY)
+        # Путь к работнику сохраняется.
+        self.assertEqual(int(field.cell_type[6, 5]), config.STEM)
+        self.assertEqual(int(field.cell_type[6, 6]), config.STEM)
+
+    def test_branch_becomes_useful_before_grace_expires(self) -> None:
+        field = make_field()
+        put_seed(field, 0, 0)
+        put_stem(field, 1, 0)
+        put_stem(field, 2, 0)
+
+        with mock.patch.object(config, "STEM_PRUNE_GRACE", 4):
+            sim = Simulation(field, seed_actions=False)
+            sim.tick()
+            # Пока ветвь была тупиком, ей назначили срок.
+            self.assertGreater(int(field.die_at[0, 2]), 0)
+
+            # Появился работник — ветвь стала полезной.
+            put_worker(field, 3, 0, config.GREEN)
+            sim.tick()
+            sim.tick()
+            sim.tick()
+
+        self.assertEqual(int(field.cell_type[0, 2]), config.STEM)
+        self.assertEqual(int(field.die_at[0, 2]), 0)
+
+    def test_stems_of_seedless_organism_are_removed(self) -> None:
         field = make_field()
         put_stem(field, 4, 4)
+        put_stem(field, 5, 4)
         put_worker(field, 4, 5, config.GREEN)
-        field.die_at[4, 4] = 1
-        field.touch()
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
 
-        # К тупику прикреплён работник, поэтому стебель не умирает.
-        self.assertEqual(int(field.cell_type[4, 4]), config.STEM)
+        # Семени нет — весь организм мёртв, стебли убираются сразу.
+        self.assertEqual(int(field.cell_type[4, 4]), config.EMPTY)
+        self.assertEqual(int(field.cell_type[4, 5]), config.EMPTY)
 
-    def test_energy_flow_refreshes_stem_idle_timer(self) -> None:
+    def test_energy_in_dead_tail_does_not_save_it(self) -> None:
         field = make_field()
         put_seed(field, 0, 0)
         put_stem(field, 1, 0)
         put_stem(field, 2, 0, energy=10.0)
-        field.die_at[0, 2] = 1
-        field.touch()
 
-        sim = Simulation(field, seed_actions=False)
-        sim.tick()
+        with mock.patch.object(config, "STEM_PRUNE_GRACE", 2):
+            sim = Simulation(field, seed_actions=False)
+            sim.tick()
+            sim.tick()
+            sim.tick()
 
-        # Дальний стебель отдал энергию и остался жив, хотя это тупик.
-        self.assertEqual(int(field.cell_type[0, 2]), config.STEM)
-        self.assertGreater(int(field.die_at[0, 2]), sim.tick_count)
+        # Энергия в тупике не делает ветвь полезной: её убирают.
+        self.assertEqual(int(field.cell_type[0, 2]), config.EMPTY)
+        self.assertEqual(int(field.cell_type[0, 1]), config.STEM)
 
     def test_worker_lifetime_is_fixed_at_creation(self) -> None:
         field = make_field()

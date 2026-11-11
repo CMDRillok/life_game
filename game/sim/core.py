@@ -71,6 +71,9 @@ class Simulation:
         self.alive_count = 0
         self.alive_dirty = True
         self.lifetimes_ready = False
+        # Степени и очередь для каскадного удаления стеблей-тупиков.
+        self.stem_degree = np.zeros(field.shape, dtype=np.int8)
+        self.prune_queue = np.empty(field.cells, dtype=np.int32)
 
         self.rng = np.random.default_rng(rng_seed)
         self.seeds: list[SeedState] = []
@@ -106,6 +109,8 @@ class Simulation:
             self.alive_count = 0
             self.alive_dirty = True
             self.lifetimes_ready = False
+            self.stem_degree = np.zeros(self.field.shape, dtype=np.int8)
+            self.prune_queue = np.empty(self.field.cells, dtype=np.int32)
             self.dirty = True
             self.seeds_dirty = True
 
@@ -160,10 +165,10 @@ class Simulation:
                 f.die_at[workers] = self.tick_count + int(
                     config.WORKER_CREATE_COST * factor
                 )
-            stems = missing & (ct == config.STEM)
-            if stems.any():
-                # Стебель не стареет: даём ему полный срок как тупику.
-                f.die_at[stems] = self.tick_count + config.STEM_IDLE_TIMEOUT
+        # У стеблей нет срока жизни; старые чекпоинты могли хранить die_at.
+        stems = ct == config.STEM
+        if stems.any():
+            f.die_at[stems] = 0
         self.lifetimes_ready = True
 
     def _schedule_lifetime(self, y: int, x: int, creation_energy: float) -> None:
@@ -173,10 +178,6 @@ class Simulation:
         self.field.die_at[y, x] = self.tick_count + int(
             creation_energy * config.LIFETIME_TICKS_PER_ENERGY
         )
-
-    def _schedule_stem_idle(self, y: int, x: int) -> None:
-        """Сбросить таймер тупика для нового стебля."""
-        self.field.die_at[y, x] = self.tick_count + config.STEM_IDLE_TIMEOUT
 
     def _remove_seed_at(self, y: int, x: int) -> bool:
         kept = [s for s in self.seeds if not (s.y == y and s.x == x)]
@@ -221,6 +222,38 @@ class Simulation:
         self.dirty = True
         f.touch()
         return code
+
+    def prune_stems(self) -> int:
+        """Удалить стебли, которые не ведут к семени/работнику.
+
+        Вызывать только при актуальном BFS: ядро использует `dist_seed`.
+        """
+        f = self.field
+        pruned, self.alive_count = rules.prune_dead_stems(
+            f.cell_type,
+            f.energy,
+            f.organic,
+            f.soil_energy,
+            f.capacity,
+            f.organism_id,
+            f.dist_seed,
+            f.die_at,
+            self.alive_idx,
+            self.alive_pos,
+            self.alive_count,
+            self.stem_degree,
+            self.prune_queue,
+            self.tick_count,
+            config.STEM_PRUNE_GRACE,
+            config.STEM,
+            config.EMPTY,
+            config.DEATH_ORGANIC,
+            config.RESOURCE_RADIUS,
+        )
+        if pruned:
+            self.dirty = True
+            f.touch()
+        return pruned
 
     def _seed_valid(self, state: SeedState) -> bool:
         f = self.field
@@ -513,7 +546,7 @@ class Simulation:
         f.energy[sy, sx] = 0.0
         f.capacity[sy, sx] = config.STEM_CAPACITY
         f.dist_seed[sy, sx] = -1
-        self._schedule_stem_idle(sy, sx)
+        f.die_at[sy, sx] = 0
 
         f.cell_type[ny, nx] = config.SEED
         f.energy[ny, nx] = current - config.SEED_MOVE_COST
@@ -925,9 +958,6 @@ class Simulation:
             config.ORANGE,
             config.BLUE,
             config.STEM,
-            f.die_at,
-            self.tick_count,
-            config.STEM_IDLE_TIMEOUT,
         )
 
         energy_kernels.flow_stems(
@@ -941,9 +971,6 @@ class Simulation:
             config.SEED_CAPACITY,
             config.STEM,
             config.SEED,
-            f.die_at,
-            self.tick_count,
-            config.STEM_IDLE_TIMEOUT,
         )
 
         died, self.alive_count = rules.apply_deaths(
@@ -963,12 +990,9 @@ class Simulation:
             config.GREEN,
             config.ORANGE,
             config.BLUE,
-            config.STEM,
-            config.SEED,
             config.EMPTY,
             config.DEATH_ORGANIC,
             config.RESOURCE_RADIUS,
-            config.STEM_IDLE_TIMEOUT,
         )
         if died:
             self.dirty = True
@@ -976,11 +1000,16 @@ class Simulation:
             # работника и добавить уже существующий индекс повторно.
             self.prune_workers()
 
+        # BFS ещё актуален: смерть работников не меняет стебли.
+        self.prune_stems()
+
         if self.seed_actions_enabled:
             # Поддержание жизни семян может убрать источники BFS.
-            self.apply_seed_upkeep()
-            if self.dirty:
+            upkeep_died = self.apply_seed_upkeep()
+            if upkeep_died:
+                # Организм остался без семени — сразу убираем его стебли.
                 self.rebuild_bfs()
+                self.prune_stems()
             self.seed_step_all()
 
         self.tick_count += 1

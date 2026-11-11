@@ -219,6 +219,8 @@ class SeedMoveTests(unittest.TestCase):
         field = make_field(11, 11)
         put_seed(field, 5, 5, energy=200.0)
         put_stem(field, 5, 6)
+        # Работник удерживает старый стебель от pruning, пока семя растёт.
+        put_worker(field, 5, 7, config.GREEN)
 
         sim = Simulation(field)
         filled_before = int((field.cell_type != config.EMPTY).sum())
