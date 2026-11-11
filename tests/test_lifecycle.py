@@ -56,7 +56,7 @@ class GreenCrowdTests(unittest.TestCase):
             float(field.energy[5, 5]), config.GREEN_RATE, places=5
         )
 
-    def test_one_leaf_neighbor_halves_production(self) -> None:
+    def test_one_neighbor_cell_halves_production(self) -> None:
         field = make_field()
         put_worker(field, 5, 5, config.GREEN, org=1)
         put_worker(field, 6, 5, config.GREEN, org=2)
@@ -68,7 +68,7 @@ class GreenCrowdTests(unittest.TestCase):
         self.assertAlmostEqual(float(field.energy[5, 5]), expected, places=5)
         self.assertAlmostEqual(float(field.energy[5, 6]), expected, places=5)
 
-    def test_two_leaf_neighbors_leave_ten_percent(self) -> None:
+    def test_two_neighbor_cells_leave_ten_percent(self) -> None:
         field = make_field()
         put_worker(field, 5, 5, config.GREEN)
         put_worker(field, 5, 4, config.GREEN)
@@ -83,7 +83,7 @@ class GreenCrowdTests(unittest.TestCase):
             float(field.energy[5, 5]), config.GREEN_RATE * 0.1, places=5
         )
 
-    def test_three_leaf_neighbors_produce_nothing(self) -> None:
+    def test_three_neighbor_cells_produce_nothing(self) -> None:
         field = make_field()
         put_worker(field, 5, 5, config.GREEN)
         for x, y in ((5, 4), (5, 6), (4, 5)):
@@ -94,7 +94,7 @@ class GreenCrowdTests(unittest.TestCase):
 
         self.assertAlmostEqual(float(field.energy[5, 5]), 0.0, places=5)
 
-    def test_stems_and_seeds_do_not_count_as_leaves(self) -> None:
+    def test_stems_do_not_count_as_neighbors(self) -> None:
         field = make_field()
         put_worker(field, 5, 5, config.GREEN)
         for dy in (-1, 0, 1):
@@ -110,6 +110,32 @@ class GreenCrowdTests(unittest.TestCase):
         self.assertAlmostEqual(
             float(field.energy[5, 5]), config.GREEN_RATE, places=5
         )
+
+    def test_seed_and_worker_neighbors_count(self) -> None:
+        field = make_field()
+        put_worker(field, 5, 5, config.GREEN)
+        put_seed(field, 6, 5)
+        put_worker(field, 4, 5, config.ORANGE, energy=5.0)
+
+        sim = Simulation(field, seed_actions=False)
+        sim.tick()
+
+        # Семя и оранжевая клетка — не стебли, поэтому это 2 соседа.
+        expected = config.GREEN_RATE * config.GREEN_NEIGHBOR_EFFICIENCY[2]
+        self.assertAlmostEqual(float(field.energy[5, 5]), expected, places=5)
+
+    def test_mixed_neighborhood_ignores_only_stems(self) -> None:
+        field = make_field()
+        put_worker(field, 5, 5, config.GREEN)
+        put_stem(field, 5, 4)
+        put_seed(field, 6, 5)
+        put_seed(field, 4, 5)
+
+        sim = Simulation(field, seed_actions=False)
+        sim.tick()
+
+        expected = config.GREEN_RATE * config.GREEN_NEIGHBOR_EFFICIENCY[2]
+        self.assertAlmostEqual(float(field.energy[5, 5]), expected, places=5)
 
 
 class SeedUpkeepTests(unittest.TestCase):

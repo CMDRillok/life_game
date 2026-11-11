@@ -119,7 +119,7 @@ class InjectionTests(unittest.TestCase):
         sim = Simulation(field, seed_actions=False)
         sim.tick()
 
-        # Соседние стебли не считаются листьями и не снижают производство.
+        # Соседние стебли не считаются соседями и не снижают производство.
         gain = config.GREEN_RATE
         self.assertAlmostEqual(float(field.energy[4, 1]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[4, 2]), 0.0, places=5)
@@ -133,7 +133,8 @@ class InjectionTests(unittest.TestCase):
         sim = Simulation(field, seed_actions=False)
         sim.tick()
 
-        gain = config.GREEN_RATE
+        # Семя — не стебель, поэтому считается соседом и даёт 50%.
+        gain = config.GREEN_RATE * config.GREEN_NEIGHBOR_EFFICIENCY[1]
         self.assertAlmostEqual(float(field.energy[2, 2]), 0.0, places=5)
         self.assertAlmostEqual(float(field.energy[3, 2]), gain, places=5)
 

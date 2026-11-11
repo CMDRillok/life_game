@@ -41,15 +41,17 @@ def produce(
     radius: int,
     green_single_efficiency: float,
     green_pair_efficiency: float,
+    stem_code: int,
+    empty_code: int,
 ) -> None:
     """Производство энергии за тик.
 
     produced[y, x] = 1, если клетка произвела энергию в этом тике.
     Это же используется для проверки голодной смерти.
 
-    Зелёная клетка считает только соседние зелёные клетки по 8 направлениям:
-    0 соседей — 100%, 1 — `green_single_efficiency`, 2 — `green_pair_efficiency`,
-    3 и больше — 0%. Стебли, семена и работники на фотосинтез не влияют.
+    Зелёная клетка считает всех занятых соседей по 8 направлениям, кроме
+    стеблей: 0 соседей — 100%, 1 — `green_single_efficiency`, 2 —
+    `green_pair_efficiency`, 3 и больше — 0%.
     """
     h, w = cell_type.shape
     for k in range(worker_count):
@@ -67,7 +69,8 @@ def produce(
                     if dy == 0 and dx == 0:
                         continue
                     nx = _wrap(x + dx, w)
-                    if cell_type[ny, nx] == green_code:
+                    ncode = cell_type[ny, nx]
+                    if ncode != empty_code and ncode != stem_code:
                         neighbors += 1
 
             if neighbors == 0:

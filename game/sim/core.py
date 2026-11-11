@@ -909,6 +909,8 @@ class Simulation:
             config.RESOURCE_RADIUS,
             config.GREEN_NEIGHBOR_EFFICIENCY[1],
             config.GREEN_NEIGHBOR_EFFICIENCY[2],
+            config.STEM,
+            config.EMPTY,
         )
 
         energy_kernels.inject_workers(
