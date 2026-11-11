@@ -145,7 +145,7 @@ class Simulation:
         self.alive_count -= 1
 
     def initialize_lifetimes(self) -> None:
-        """Назначить срок жизни клеткам без `die_at` (демо, старый чекпоинт)."""
+        """Назначить сроки клеткам без `die_at` (демо, старый чекпоинт)."""
         if self.lifetimes_ready:
             return
         f = self.field
@@ -162,9 +162,8 @@ class Simulation:
                 )
             stems = missing & (ct == config.STEM)
             if stems.any():
-                f.die_at[stems] = self.tick_count + int(
-                    config.SEED_MOVE_COST * factor
-                )
+                # Стебель не стареет: даём ему полный срок как тупику.
+                f.die_at[stems] = self.tick_count + config.STEM_IDLE_TIMEOUT
         self.lifetimes_ready = True
 
     def _schedule_lifetime(self, y: int, x: int, creation_energy: float) -> None:
@@ -174,6 +173,10 @@ class Simulation:
         self.field.die_at[y, x] = self.tick_count + int(
             creation_energy * config.LIFETIME_TICKS_PER_ENERGY
         )
+
+    def _schedule_stem_idle(self, y: int, x: int) -> None:
+        """Сбросить таймер тупика для нового стебля."""
+        self.field.die_at[y, x] = self.tick_count + config.STEM_IDLE_TIMEOUT
 
     def _remove_seed_at(self, y: int, x: int) -> bool:
         kept = [s for s in self.seeds if not (s.y == y and s.x == x)]
@@ -510,7 +513,7 @@ class Simulation:
         f.energy[sy, sx] = 0.0
         f.capacity[sy, sx] = config.STEM_CAPACITY
         f.dist_seed[sy, sx] = -1
-        self._schedule_lifetime(sy, sx, config.SEED_MOVE_COST)
+        self._schedule_stem_idle(sy, sx)
 
         f.cell_type[ny, nx] = config.SEED
         f.energy[ny, nx] = current - config.SEED_MOVE_COST
@@ -920,6 +923,9 @@ class Simulation:
             config.ORANGE,
             config.BLUE,
             config.STEM,
+            f.die_at,
+            self.tick_count,
+            config.STEM_IDLE_TIMEOUT,
         )
 
         energy_kernels.flow_stems(
@@ -933,6 +939,9 @@ class Simulation:
             config.SEED_CAPACITY,
             config.STEM,
             config.SEED,
+            f.die_at,
+            self.tick_count,
+            config.STEM_IDLE_TIMEOUT,
         )
 
         died, self.alive_count = rules.apply_deaths(
@@ -949,12 +958,15 @@ class Simulation:
             self.alive_pos,
             self.alive_count,
             self.tick_count,
+            config.GREEN,
             config.ORANGE,
             config.BLUE,
+            config.STEM,
             config.SEED,
             config.EMPTY,
             config.DEATH_ORGANIC,
             config.RESOURCE_RADIUS,
+            config.STEM_IDLE_TIMEOUT,
         )
         if died:
             self.dirty = True

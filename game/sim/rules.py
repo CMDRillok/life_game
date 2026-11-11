@@ -169,18 +169,25 @@ def apply_deaths(
     alive_pos: np.ndarray,
     alive_count: int,
     tick: int,
+    green_code: int,
     orange_code: int,
     blue_code: int,
+    stem_code: int,
     seed_code: int,
     empty_code: int,
     death_organic: float,
     radius: int,
+    stem_idle_timeout: int,
 ) -> tuple[int, int]:
-    """Убить голодающих работников и клетки с истёкшим сроком жизни.
+    """Убить голодающих/старых работников и стебли-тупики.
 
     Обходит только живые клетки из `alive_idx` и сжимает список на месте.
     Энергия умершей клетки равномерно рассеивается в `soil_energy` по области
     (2*radius+1)^2, в собственной клетке остаётся органика.
+
+    Стебель не стареет. Он продлевает жизнь, пока является частью пути
+    (2+ соседних стебля) или к нему прикреплены работник/семя. Тупик без
+    потока энергии умирает после `stem_idle_timeout` тиков простоя.
 
     Семена сюда не попадают: у них нет срока жизни, они умирают отдельно,
     когда заканчивается энергия на поддержание.
@@ -204,11 +211,54 @@ def apply_deaths(
             continue
 
         dead = False
-        if (code == orange_code or code == blue_code) and produced[y, x] == 0:
-            if energy[y, x] <= 0.0:
+        if code == stem_code:
+            stem_neighbors = 0
+            attached = False
+
+            ny = _wrap(y - 1, h)
+            ncode = cell_type[ny, x]
+            if ncode == stem_code:
+                stem_neighbors += 1
+            elif ncode != empty_code:
+                attached = True
+
+            ny = _wrap(y + 1, h)
+            ncode = cell_type[ny, x]
+            if ncode == stem_code:
+                stem_neighbors += 1
+            elif ncode != empty_code:
+                attached = True
+
+            nx = _wrap(x - 1, w)
+            ncode = cell_type[y, nx]
+            if ncode == stem_code:
+                stem_neighbors += 1
+            elif ncode != empty_code:
+                attached = True
+
+            nx = _wrap(x + 1, w)
+            ncode = cell_type[y, nx]
+            if ncode == stem_code:
+                stem_neighbors += 1
+            elif ncode != empty_code:
+                attached = True
+
+            if attached or stem_neighbors > 1:
+                die_at[y, x] = tick + stem_idle_timeout
+            elif die_at[y, x] == 0:
+                die_at[y, x] = tick + stem_idle_timeout
+            elif tick >= die_at[y, x]:
                 dead = True
-        if code != seed_code and die_at[y, x] > 0 and tick >= die_at[y, x]:
-            dead = True
+        else:
+            if (code == orange_code or code == blue_code) and produced[y, x] == 0:
+                if energy[y, x] <= 0.0:
+                    dead = True
+            if (
+                (code == green_code or code == orange_code or code == blue_code)
+                and die_at[y, x] > 0
+                and tick >= die_at[y, x]
+            ):
+                dead = True
 
         if not dead:
             i += 1

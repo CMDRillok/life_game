@@ -13,7 +13,7 @@ import pygame
 
 from game import config
 from game.camera import Camera
-from game.demo import seed_demo
+from game.demo import seed_demo, seed_start
 from game.field import Field
 from game.renderer import Renderer
 from game.sim import Simulation
@@ -23,18 +23,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="life_game: поле и визуализация")
     parser.add_argument("--width", type=int, default=config.WIDTH, help="ширина поля")
     parser.add_argument("--height", type=int, default=config.HEIGHT, help="высота поля")
-    parser.add_argument(
+    world = parser.add_mutually_exclusive_group()
+    world.add_argument(
         "--demo",
-        dest="demo",
         action="store_true",
-        default=True,
-        help="заполнить демо-данными (по умолчанию)",
+        help="старая демо-сцена с готовыми организмами",
     )
-    parser.add_argument(
+    world.add_argument(
         "--empty",
-        dest="demo",
-        action="store_false",
-        help="пустое поле",
+        action="store_true",
+        help="пустое поле без семян",
     )
     parser.add_argument(
         "--organisms",
@@ -73,7 +71,9 @@ def create_field(args: argparse.Namespace) -> Field:
         print(f"загружено: {field}")
     else:
         field = Field(args.width, args.height)
-        if args.demo:
+        if args.empty:
+            print("пустое поле")
+        elif args.demo:
             seed_demo(
                 field,
                 organisms=max(1, args.organisms),
@@ -83,6 +83,13 @@ def create_field(args: argparse.Namespace) -> Field:
                 "демо-сцена заполнена: "
                 f"организмов {max(1, args.organisms)}, "
                 f"семян на организм {max(1, args.seeds_per_org)}"
+            )
+        else:
+            placed = seed_start(field)
+            print(
+                "стартовый мир: "
+                f"семян {placed}, "
+                f"энергия каждого {config.START_SEED_ENERGY:g}"
             )
     return field
 
@@ -140,6 +147,24 @@ def run_headless(field: Field, args: argparse.Namespace) -> None:
         print(f"сохранено: {target}")
 
 
+def warmup_numba() -> None:
+    """Скомпилировать ядра на крошечном мире, не трогая стартовое поле."""
+    field = Field(8, 8)
+    field.cell_type[0, 0] = config.SEED
+    field.organism_id[0, 0] = 1
+    field.energy[0, 0] = 200.0
+    field.cell_type[0, 1] = config.STEM
+    field.organism_id[0, 1] = 1
+    field.capacity[0, 1] = config.STEM_CAPACITY
+    field.cell_type[0, 2] = config.STEM
+    field.organism_id[0, 2] = 1
+    field.capacity[0, 2] = config.STEM_CAPACITY
+    field.cell_type[1, 1] = config.GREEN
+    field.organism_id[1, 1] = 1
+    field.energy[1, 1] = 10.0
+    Simulation(field, rng_seed=0).tick()
+
+
 def run_interactive(field: Field, args: argparse.Namespace) -> None:
     pygame.init()
     pygame.display.set_caption("life_game — поле")
@@ -152,13 +177,15 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
     camera.fit(field, *screen.get_size())
 
     sim = Simulation(field)
-    print("прогрев numba (первый тик)...")
-    sim.tick()
+    print("прогрев numba (без изменения мира)...")
+    warmup_numba()
 
     sim_hz = max(0.1, float(args.sim_hz))
     accumulator = 0.0
-    paused = False
+    paused = config.START_PAUSED
     single_tick = False
+    if paused:
+        print("симуляция на паузе: Space — запустить, N — один тик")
 
     # Измеренная скорость и кэш статистики для HUD.
     measured_ticks = 0

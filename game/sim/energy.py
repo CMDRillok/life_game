@@ -124,11 +124,17 @@ def flow_stems(
     seed_capacity: float,
     stem_code: int,
     seed_code: int,
+    die_at: np.ndarray,
+    tick: int,
+    stem_idle_timeout: int,
 ) -> None:
     """Переток энергии по стеблям к семени.
 
     queue содержит клетки в порядке BFS (от семени наружу), поэтому
     за один тик энергия сдвигается максимум на одну клетку.
+
+    Стебли, через которые реально прошла энергия, получают новый срок
+    «активности»: тупик без потока умирает только после простоя.
     """
     h, w = cell_type.shape
     for i in range(count):
@@ -178,8 +184,13 @@ def flow_stems(
             continue
 
         transfer = current if current < free else free
+        if transfer <= 0.0:
+            continue
         energy[y, x] = current - transfer
         energy[py, px] += transfer
+        die_at[y, x] = tick + stem_idle_timeout
+        if target_type == stem_code:
+            die_at[py, px] = tick + stem_idle_timeout
 
 
 @njit(cache=True)
@@ -195,10 +206,14 @@ def inject_workers(
     orange_code: int,
     blue_code: int,
     stem_code: int,
+    die_at: np.ndarray,
+    tick: int,
+    stem_idle_timeout: int,
 ) -> None:
     """Работники отдают энергию только соседним стеблям своего организма.
 
     Семя в инъекции не участвует: прямой передачи работник -> семя нет.
+    Стебель, получивший энергию, считается активным.
     """
     h, w = cell_type.shape
     for k in range(worker_count):
@@ -284,5 +299,8 @@ def inject_workers(
             continue
 
         transfer = current if current < best_free else best_free
+        if transfer <= 0.0:
+            continue
         energy[y, x] = current - transfer
         energy[best_y, best_x] += transfer
+        die_at[best_y, best_x] = tick + stem_idle_timeout

@@ -92,6 +92,51 @@ def _place_organism(
         field.capacity[y, x] = 0.0
 
 
+def seed_start(
+    field: Field,
+    seed: int = 12345,
+    count: int | None = None,
+    energy: float | None = None,
+) -> int:
+    """Заполнить поле одиночными семенами с начальным запасом энергии.
+
+    Размер поля, число семян и энергия каждого задаются в `game/config.py`
+    (`WIDTH`, `HEIGHT`, `START_SEED_COUNT`, `START_SEED_ENERGY`).
+    Возвращает число поставленных семян.
+    """
+    rng = np.random.default_rng(seed)
+    total = field.cells
+    target = config.START_SEED_COUNT if count is None else int(count)
+    target = max(0, min(total, target))
+    start_energy = (
+        config.START_SEED_ENERGY if energy is None else float(energy)
+    )
+    if target == 0:
+        return 0
+
+    if target * 2 <= total:
+        chosen: set[int] = set()
+        while len(chosen) < target:
+            chosen.add(int(rng.integers(total)))
+        indices = np.fromiter(chosen, dtype=np.int64, count=target)
+    else:
+        indices = rng.permutation(total)[:target]
+
+    width = field.width
+    for number, index in enumerate(indices.tolist(), start=1):
+        y = index // width
+        x = index - y * width
+        field.cell_type[y, x] = config.SEED
+        field.organism_id[y, x] = number
+        field.energy[y, x] = start_energy
+        field.capacity[y, x] = 0.0
+        field.dist_seed[y, x] = -1
+        field.die_at[y, x] = 0
+
+    field.touch()
+    return target
+
+
 def seed_demo(
     field: Field,
     seed: int = 12345,

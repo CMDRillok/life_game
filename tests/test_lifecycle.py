@@ -9,6 +9,7 @@ from unittest import mock
 import numpy as np
 
 from game import config
+from game.demo import seed_start
 from game.field import Field
 from game.renderer import make_lut
 from game.sim import Genome, Simulation
@@ -125,22 +126,63 @@ class SeedUpkeepTests(unittest.TestCase):
 
 
 class LifetimeTests(unittest.TestCase):
-    def test_stem_dies_on_scheduled_tick_and_spills_energy(self) -> None:
+    def test_isolated_stem_dies_after_idle_timeout_and_spills_energy(self) -> None:
         field = make_field()
         put_stem(field, 4, 4, energy=9.0)
+
+        with mock.patch.object(config, "STEM_IDLE_TIMEOUT", 2):
+            sim = Simulation(field, seed_actions=False)
+            sim.tick()
+            sim.tick()
+            self.assertEqual(int(field.cell_type[4, 4]), config.STEM)
+
+            sim.tick()
+            self.assertEqual(int(field.cell_type[4, 4]), config.EMPTY)
+        self.assertAlmostEqual(
+            float(field.organic[4, 4]), config.DEATH_ORGANIC, places=5
+        )
+        self.assertAlmostEqual(float(field.soil_energy.sum()), 9.0, places=4)
+
+    def test_connector_stem_does_not_die_from_time(self) -> None:
+        field = make_field()
+        for x in (3, 4, 5):
+            put_stem(field, x, 4)
         field.die_at[4, 4] = 1
         field.touch()
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
+
+        # У среднего стебля два соседних стебля: это путь, а не тупик.
         self.assertEqual(int(field.cell_type[4, 4]), config.STEM)
 
+    def test_tip_stem_with_attached_worker_does_not_die(self) -> None:
+        field = make_field()
+        put_stem(field, 4, 4)
+        put_worker(field, 4, 5, config.GREEN)
+        field.die_at[4, 4] = 1
+        field.touch()
+
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
-        self.assertEqual(int(field.cell_type[4, 4]), config.EMPTY)
-        self.assertAlmostEqual(
-            float(field.organic[4, 4]), config.DEATH_ORGANIC, places=5
-        )
-        self.assertAlmostEqual(float(field.soil_energy.sum()), 9.0, places=4)
+
+        # К тупику прикреплён работник, поэтому стебель не умирает.
+        self.assertEqual(int(field.cell_type[4, 4]), config.STEM)
+
+    def test_energy_flow_refreshes_stem_idle_timer(self) -> None:
+        field = make_field()
+        put_seed(field, 0, 0)
+        put_stem(field, 1, 0)
+        put_stem(field, 2, 0, energy=10.0)
+        field.die_at[0, 2] = 1
+        field.touch()
+
+        sim = Simulation(field, seed_actions=False)
+        sim.tick()
+
+        # Дальний стебель отдал энергию и остался жив, хотя это тупик.
+        self.assertEqual(int(field.cell_type[0, 2]), config.STEM)
+        self.assertGreater(int(field.die_at[0, 2]), sim.tick_count)
 
     def test_worker_lifetime_is_fixed_at_creation(self) -> None:
         field = make_field()
@@ -272,6 +314,24 @@ class MutationTests(unittest.TestCase):
         self.assertEqual(len(diffs), 1)
         self.assertEqual(after_first, after_second)
         self.assertEqual(state.last_mutation_tick, sim.tick_count)
+
+
+class StartWorldTests(unittest.TestCase):
+    def test_seed_start_scatters_seeds_with_energy(self) -> None:
+        field = make_field(60, 40)
+        placed = seed_start(field, seed=3, count=25, energy=77.0)
+
+        self.assertEqual(placed, 25)
+        seeds = np.argwhere(field.cell_type == config.SEED)
+        self.assertEqual(len(seeds), 25)
+        self.assertEqual(
+            len({int(field.organism_id[y, x]) for y, x in seeds}), 25
+        )
+        for y, x in seeds:
+            self.assertAlmostEqual(float(field.energy[y, x]), 77.0, places=5)
+
+    def test_simulation_starts_paused_by_default(self) -> None:
+        self.assertTrue(config.START_PAUSED)
 
 
 class PaletteTests(unittest.TestCase):
