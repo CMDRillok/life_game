@@ -99,7 +99,18 @@ class Renderer:
                 values = field.energy
                 palette = self.cell_energy_palette
             vmax = self._value_scale(field, view_mode)
-            indices = np.clip(values * (255.0 / vmax), 0, 255).astype(np.uint8)
+            if view_mode in (config.VIEW_ORGANIC, config.VIEW_ENERGY):
+                # Токсичный избыток всегда ярко-красный, независимо от vmax.
+                indices = np.clip(
+                    values * (254.0 / vmax), 0, 254
+                ).astype(np.uint8)
+                toxic = values >= config.RESOURCE_TOXIC_THRESHOLD
+                if toxic.any():
+                    indices[toxic] = 255
+                palette = list(palette)
+                palette[255] = config.TOXIC_COLOR
+            else:
+                indices = np.clip(values * (255.0 / vmax), 0, 255).astype(np.uint8)
         else:  # pragma: no cover
             raise ValueError(f"неизвестный режим просмотра: {view_mode}")
 
@@ -401,7 +412,7 @@ class Renderer:
         width, height = screen.get_size()
         x0 = 10
         y0 = height - 44
-        panel_w = 500
+        panel_w = 560
         panel = pygame.Surface((panel_w, 34), pygame.SRCALPHA)
         panel.fill(config.HUD_BG)
         screen.blit(panel, (x0, y0))
@@ -436,5 +447,17 @@ class Renderer:
         right = self._small_font.render(f"{vmax:.1f}", True, config.HUD_MUTED)
         screen.blit(left, (x0 + 244, y0 + 10))
         screen.blit(right, (x0 + 280, y0 + 10))
+
+        caption_x = x0 + 340
+        if view_mode in (config.VIEW_ORGANIC, config.VIEW_ENERGY):
+            pygame.draw.rect(
+                screen, config.TOXIC_COLOR, (x0 + 320, y0 + 12, 12, 12)
+            )
+            toxic_text = self._small_font.render(
+                f"≥{config.RESOURCE_TOXIC_THRESHOLD:g}", True, config.HUD_FG
+            )
+            screen.blit(toxic_text, (x0 + 336, y0 + 10))
+            caption_x = x0 + 390
+
         caption = self._small_font.render(caption_text, True, config.HUD_FG)
-        screen.blit(caption, (x0 + 340, y0 + 10))
+        screen.blit(caption, (caption_x, y0 + 10))

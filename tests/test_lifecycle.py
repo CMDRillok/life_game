@@ -44,10 +44,20 @@ def put_worker(
     field.touch()
 
 
+def put_support_stem(
+    field: Field, x: int, y: int, org: int = 1
+) -> None:
+    """Стебель-опора с нулевой ёмкостью: работник жив, но не сливает энергию."""
+    put_stem(field, x, y, org=org)
+    field.capacity[y, x] = 0.0
+
+
 class GreenCrowdTests(unittest.TestCase):
     def test_green_alone_produces_full_rate(self) -> None:
         field = make_field()
         put_worker(field, 5, 5, config.GREEN)
+        put_support_stem(field, 6, 5)
+        put_seed(field, 7, 5)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
@@ -60,6 +70,10 @@ class GreenCrowdTests(unittest.TestCase):
         field = make_field()
         put_worker(field, 5, 5, config.GREEN, org=1)
         put_worker(field, 6, 5, config.GREEN, org=2)
+        put_support_stem(field, 5, 4, org=1)
+        put_seed(field, 5, 3, org=1)
+        put_support_stem(field, 6, 4, org=2)
+        put_seed(field, 6, 3, org=2)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
@@ -70,9 +84,15 @@ class GreenCrowdTests(unittest.TestCase):
 
     def test_two_neighbor_cells_leave_ten_percent(self) -> None:
         field = make_field()
-        put_worker(field, 5, 5, config.GREEN)
-        put_worker(field, 5, 4, config.GREEN)
-        put_worker(field, 5, 6, config.GREEN)
+        put_worker(field, 5, 5, config.GREEN, org=1)
+        put_worker(field, 5, 4, config.GREEN, org=2)
+        put_worker(field, 5, 6, config.GREEN, org=3)
+        put_support_stem(field, 6, 5, org=1)
+        put_seed(field, 7, 5, org=1)
+        put_support_stem(field, 6, 4, org=2)
+        put_seed(field, 7, 4, org=2)
+        put_support_stem(field, 6, 6, org=3)
+        put_seed(field, 7, 6, org=3)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
@@ -85,9 +105,18 @@ class GreenCrowdTests(unittest.TestCase):
 
     def test_three_neighbor_cells_produce_nothing(self) -> None:
         field = make_field()
-        put_worker(field, 5, 5, config.GREEN)
-        for x, y in ((5, 4), (5, 6), (4, 5)):
-            put_worker(field, x, y, config.GREEN)
+        put_worker(field, 5, 5, config.GREEN, org=1)
+        put_worker(field, 5, 4, config.GREEN, org=2)
+        put_worker(field, 5, 6, config.GREEN, org=3)
+        put_worker(field, 4, 5, config.GREEN, org=4)
+        put_support_stem(field, 6, 5, org=1)
+        put_seed(field, 7, 5, org=1)
+        put_support_stem(field, 6, 4, org=2)
+        put_seed(field, 7, 4, org=2)
+        put_support_stem(field, 6, 6, org=3)
+        put_seed(field, 7, 6, org=3)
+        put_support_stem(field, 3, 5, org=4)
+        put_seed(field, 2, 5, org=4)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
@@ -101,7 +130,8 @@ class GreenCrowdTests(unittest.TestCase):
             for dx in (-1, 0, 1):
                 if dy == 0 and dx == 0:
                     continue
-                put_stem(field, 5 + dx, 5 + dy)
+                put_support_stem(field, 5 + dx, 5 + dy)
+        put_seed(field, 7, 5)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
@@ -113,9 +143,13 @@ class GreenCrowdTests(unittest.TestCase):
 
     def test_seed_and_worker_neighbors_count(self) -> None:
         field = make_field()
-        put_worker(field, 5, 5, config.GREEN)
-        put_seed(field, 6, 5)
-        put_worker(field, 4, 5, config.ORANGE, energy=5.0)
+        put_worker(field, 5, 5, config.GREEN, org=1)
+        put_seed(field, 6, 5, org=2)
+        put_worker(field, 4, 5, config.ORANGE, energy=5.0, org=3)
+        put_support_stem(field, 5, 4, org=1)
+        put_seed(field, 5, 3, org=1)
+        put_support_stem(field, 3, 5, org=3)
+        put_seed(field, 2, 5, org=3)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
@@ -126,10 +160,11 @@ class GreenCrowdTests(unittest.TestCase):
 
     def test_mixed_neighborhood_ignores_only_stems(self) -> None:
         field = make_field()
-        put_worker(field, 5, 5, config.GREEN)
-        put_stem(field, 5, 4)
-        put_seed(field, 6, 5)
-        put_seed(field, 4, 5)
+        put_worker(field, 5, 5, config.GREEN, org=1)
+        put_support_stem(field, 5, 4, org=1)
+        put_seed(field, 5, 3, org=1)
+        put_seed(field, 6, 5, org=2)
+        put_seed(field, 4, 5, org=3)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()

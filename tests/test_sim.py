@@ -34,6 +34,14 @@ def put_worker(
     field.energy[y, x] = energy
 
 
+def put_support_stem(
+    field: Field, x: int, y: int, org: int = 1
+) -> None:
+    """Стебель-опора с нулевой ёмкостью: работник жив, но не сливает энергию."""
+    put_stem(field, x, y, org=org)
+    field.capacity[y, x] = 0.0
+
+
 class BfsTests(unittest.TestCase):
     def test_bfs_wraps_and_marks_distances(self) -> None:
         field = make_field(10, 10)
@@ -134,6 +142,8 @@ class InjectionTests(unittest.TestCase):
         field = make_field(6, 6)
         put_seed(field, 2, 2)
         put_worker(field, 2, 3, config.GREEN)
+        put_support_stem(field, 1, 3)
+        put_seed(field, 0, 3)
 
         sim = Simulation(field, seed_actions=False)
         sim.tick()
@@ -148,8 +158,10 @@ class ProductionTests(unittest.TestCase):
     def test_green_produces_fixed_energy(self) -> None:
         field = make_field(5, 5)
         put_worker(field, 2, 2, config.GREEN)
+        put_support_stem(field, 3, 2)
+        put_seed(field, 4, 2)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         self.assertEqual(int(field.cell_type[2, 2]), config.GREEN)
@@ -161,8 +173,10 @@ class ProductionTests(unittest.TestCase):
         field = make_field(7, 7)
         field.organic[2, 2] = 100.0
         put_worker(field, 3, 3, config.ORANGE)
+        put_support_stem(field, 4, 3)
+        put_seed(field, 5, 3)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         self.assertEqual(int(field.cell_type[3, 3]), config.ORANGE)
@@ -175,8 +189,10 @@ class ProductionTests(unittest.TestCase):
         field = make_field(7, 7)
         field.soil_energy[4, 4] = 100.0
         put_worker(field, 3, 3, config.BLUE)
+        put_support_stem(field, 4, 3)
+        put_seed(field, 5, 3)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         sim.tick()
 
         self.assertEqual(int(field.cell_type[3, 3]), config.BLUE)
@@ -218,8 +234,10 @@ class DeathTests(unittest.TestCase):
     def test_orange_with_stored_energy_survives(self) -> None:
         field = make_field(7, 7)
         put_worker(field, 3, 3, config.ORANGE, energy=5.0)
+        put_support_stem(field, 4, 3)
+        put_seed(field, 5, 3)
 
-        sim = Simulation(field)
+        sim = Simulation(field, seed_actions=False)
         died = sim.tick()
 
         self.assertEqual(died, 0)

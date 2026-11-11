@@ -78,6 +78,9 @@ class OrganismIsolationTests(unittest.TestCase):
     def test_worker_cannot_inject_into_foreign_stem(self) -> None:
         field = make_field(10, 10)
         put_worker(field, 2, 2, config.GREEN, org=1)
+        put_stem(field, 1, 2, org=1)
+        field.capacity[2, 1] = 0.0
+        put_seed(field, 0, 2, org=1)
         put_seed(field, 4, 2, org=2)
         put_stem(field, 3, 2, org=2)
 

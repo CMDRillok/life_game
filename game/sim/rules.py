@@ -181,12 +181,16 @@ def prune_dead_stems(
     prune_queue: np.ndarray,
     tick: int,
     grace: int,
+    overflow_idx: np.ndarray,
+    overflow_seen: np.ndarray,
+    overflow_count: int,
     stem_code: int,
     empty_code: int,
     death_organic: float,
     radius: int,
-) -> tuple[int, int]:
-    """Удалить стебли, которые никуда не ведут.
+    toxic_threshold: float,
+) -> tuple[int, int, int]:
+    """Удалить стебли, которые никуда не ведут или попали в токсичную почву.
 
     Стебель полезен, если он соединён с семенем и либо сам примыкает к
     семени/работнику, либо лежит на пути к другому полезному стеблю.
@@ -391,8 +395,15 @@ def prune_dead_stems(
             continue
 
         if code == stem_code:
+            toxic = (
+                soil_energy[y, x] >= toxic_threshold
+                or organic[y, x] >= toxic_threshold
+            )
             remove = False
-            if stem_degree[y, x] == -1:
+            if toxic:
+                # В токсичной почве стебель не выживает.
+                remove = True
+            elif stem_degree[y, x] == -1:
                 if dist_seed[y, x] < 0:
                     remove = True
                 elif die_at[y, x] == 0:
@@ -415,6 +426,14 @@ def prune_dead_stems(
                         nx = _wrap(x + dx, w)
                         soil_energy[ny, nx] += energy_part
                         organic[ny, nx] += organic_part
+                        oidx = ny * w + nx
+                        if (
+                            overflow_seen[ny, nx] == 0
+                            and overflow_count < overflow_idx.size
+                        ):
+                            overflow_seen[ny, nx] = 1
+                            overflow_idx[overflow_count] = oidx
+                            overflow_count += 1
 
                 cell_type[y, x] = empty_code
                 energy[y, x] = 0.0
@@ -434,7 +453,7 @@ def prune_dead_stems(
 
         i += 1
 
-    return died, alive_count
+    return died, alive_count, overflow_count
 
 
 @njit(cache=True)
@@ -452,21 +471,30 @@ def apply_deaths(
     alive_pos: np.ndarray,
     alive_count: int,
     tick: int,
+    overflow_idx: np.ndarray,
+    overflow_seen: np.ndarray,
+    overflow_count: int,
     green_code: int,
     orange_code: int,
     blue_code: int,
+    stem_code: int,
     empty_code: int,
     death_organic: float,
     radius: int,
-) -> tuple[int, int]:
-    """Убить голодающих и старых работников.
+    toxic_threshold: float,
+) -> tuple[int, int, int]:
+    """Убить работников: голод, старость, токсичная почва и отрыв от стебля.
 
     Обходит только живые клетки из `alive_idx` и сжимает список на месте.
-    Энергия умершей клетки равномерно рассеивается в `soil_energy` по области
-    (2*radius+1)^2, в собственной клетке остаётся органика.
+    Энергия и органика умершей клетки распределяются по области
+    (2*radius+1)^2.
 
-    Стебли и семена сюда не попадают: стебли удаляет отдельное ядро
-    `prune_dead_stems`, семена умирают от нехватки энергии на поддержание.
+    В токсичной почве гибнут все, кроме синей при избытке энергии и
+    оранжевой при избытке органики. Работник без соседнего стебля своего
+    организма тоже умирает сразу.
+
+    Стебли и семена сюда не попадают: их обрабатывают `prune_dead_stems` и
+    `Simulation.apply_toxic_seed_deaths`.
     """
     h, w = cell_type.shape
     died = 0
@@ -486,16 +514,60 @@ def apply_deaths(
             alive_count -= 1
             continue
 
+        worker = (
+            code == green_code or code == orange_code or code == blue_code
+        )
         dead = False
-        if (code == orange_code or code == blue_code) and produced[y, x] == 0:
-            if energy[y, x] <= 0.0:
+        if worker:
+            if soil_energy[y, x] >= toxic_threshold and code != blue_code:
                 dead = True
-        if (
-            (code == green_code or code == orange_code or code == blue_code)
-            and die_at[y, x] > 0
-            and tick >= die_at[y, x]
-        ):
-            dead = True
+            if organic[y, x] >= toxic_threshold and code != orange_code:
+                dead = True
+
+            if not dead:
+                org = organism_id[y, x]
+                has_stem = False
+
+                ny = _wrap(y - 1, h)
+                if (
+                    cell_type[ny, x] == stem_code
+                    and organism_id[ny, x] == org
+                ):
+                    has_stem = True
+
+                ny = _wrap(y + 1, h)
+                if (
+                    cell_type[ny, x] == stem_code
+                    and organism_id[ny, x] == org
+                ):
+                    has_stem = True
+
+                nx = _wrap(x - 1, w)
+                if (
+                    cell_type[y, nx] == stem_code
+                    and organism_id[y, nx] == org
+                ):
+                    has_stem = True
+
+                nx = _wrap(x + 1, w)
+                if (
+                    cell_type[y, nx] == stem_code
+                    and organism_id[y, nx] == org
+                ):
+                    has_stem = True
+
+                if not has_stem:
+                    dead = True
+
+            if (
+                not dead
+                and (code == orange_code or code == blue_code)
+                and produced[y, x] == 0
+                and energy[y, x] <= 0.0
+            ):
+                dead = True
+            if not dead and die_at[y, x] > 0 and tick >= die_at[y, x]:
+                dead = True
 
         if not dead:
             i += 1
@@ -512,6 +584,14 @@ def apply_deaths(
                 nx = _wrap(x + dx, w)
                 soil_energy[ny, nx] += energy_part
                 organic[ny, nx] += organic_part
+                oidx = ny * w + nx
+                if (
+                    overflow_seen[ny, nx] == 0
+                    and overflow_count < overflow_idx.size
+                ):
+                    overflow_seen[ny, nx] = 1
+                    overflow_idx[overflow_count] = oidx
+                    overflow_count += 1
 
         cell_type[y, x] = empty_code
         energy[y, x] = 0.0
@@ -528,4 +608,79 @@ def apply_deaths(
         alive_count -= 1
         died += 1
 
-    return died, alive_count
+    return died, alive_count, overflow_count
+
+
+@njit(cache=True)
+def spread_overflow_queue(
+    soil_energy: np.ndarray,
+    organic: np.ndarray,
+    queue: np.ndarray,
+    count: int,
+    seen: np.ndarray,
+    threshold: float,
+) -> tuple[int, bool]:
+    """Разлить избыток из очереди ячеек и отложить соседей на следующий тик.
+
+    Обрабатывается снимок очереди `[0:count)`: ячейка ограничивается порогом,
+    избыток делится между 8 соседями. Соседи, которые после этого сами
+    превысили порог, попадают в очередь на следующий тик.
+    """
+    h, w = soil_energy.shape
+    head = 0
+    new_count = count
+    overflowed = False
+
+    while head < count:
+        idx = queue[head]
+        head += 1
+        y = idx // w
+        x = idx - y * w
+        seen[y, x] = 0
+
+        value = soil_energy[y, x]
+        if value > threshold:
+            part = (value - threshold) / 8.0
+            soil_energy[y, x] = threshold
+            for dy in range(-1, 2):
+                ny = _wrap(y + dy, h)
+                for dx in range(-1, 2):
+                    if dy == 0 and dx == 0:
+                        continue
+                    nx = _wrap(x + dx, w)
+                    soil_energy[ny, nx] += part
+                    if (
+                        soil_energy[ny, nx] > threshold
+                        and seen[ny, nx] == 0
+                        and new_count < queue.size
+                    ):
+                        seen[ny, nx] = 1
+                        queue[new_count] = ny * w + nx
+                        new_count += 1
+            overflowed = True
+
+        value = organic[y, x]
+        if value > threshold:
+            part = (value - threshold) / 8.0
+            organic[y, x] = threshold
+            for dy in range(-1, 2):
+                ny = _wrap(y + dy, h)
+                for dx in range(-1, 2):
+                    if dy == 0 and dx == 0:
+                        continue
+                    nx = _wrap(x + dx, w)
+                    organic[ny, nx] += part
+                    if (
+                        organic[ny, nx] > threshold
+                        and seen[ny, nx] == 0
+                        and new_count < queue.size
+                    ):
+                        seen[ny, nx] = 1
+                        queue[new_count] = ny * w + nx
+                        new_count += 1
+            overflowed = True
+
+    next_count = new_count - count
+    for i in range(next_count):
+        queue[i] = queue[count + i]
+    return next_count, overflowed

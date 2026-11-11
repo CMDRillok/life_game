@@ -74,6 +74,10 @@ class Simulation:
         # Степени и очередь для каскадного удаления стеблей-тупиков.
         self.stem_degree = np.zeros(field.shape, dtype=np.int8)
         self.prune_queue = np.empty(field.cells, dtype=np.int32)
+        # Очередь ячеек, где может понадобиться разлить избыток ресурса.
+        self.overflow_idx = np.empty(field.cells, dtype=np.int32)
+        self.overflow_seen = np.zeros(field.shape, dtype=np.uint8)
+        self.overflow_count = 0
 
         self.rng = np.random.default_rng(rng_seed)
         self.seeds: list[SeedState] = []
@@ -87,6 +91,7 @@ class Simulation:
         self._org_counts: dict[int, list[int]] = {}
         self.last_seed_action = config.SEED_ACTION_NONE
         self.refresh_seeds()
+        self.queue_all_overflow()
 
     # ------------------------------------------------------------------ служебное
 
@@ -111,6 +116,11 @@ class Simulation:
             self.lifetimes_ready = False
             self.stem_degree = np.zeros(self.field.shape, dtype=np.int8)
             self.prune_queue = np.empty(self.field.cells, dtype=np.int32)
+            self.overflow_idx = np.empty(self.field.cells, dtype=np.int32)
+            self.overflow_seen = np.zeros(
+                self.field.shape, dtype=np.uint8
+            )
+            self.overflow_count = 0
             self.dirty = True
             self.seeds_dirty = True
 
@@ -187,6 +197,26 @@ class Simulation:
         self._rebuild_seed_index()
         return True
 
+    def _queue_overflow(self, y: int, x: int) -> None:
+        """Поставить ячейку в очередь на проверку избытка ресурса."""
+        if self.overflow_seen[y, x]:
+            return
+        if self.overflow_count >= self.overflow_idx.size:
+            return
+        self.overflow_seen[y, x] = 1
+        self.overflow_idx[self.overflow_count] = y * self.field.width + x
+        self.overflow_count += 1
+
+    def queue_all_overflow(self) -> None:
+        """Один раз собрать все переполненные ячейки (старт/load/resize)."""
+        f = self.field
+        threshold = config.RESOURCE_OVERFLOW_THRESHOLD
+        self.overflow_seen.fill(0)
+        self.overflow_count = 0
+        mask = (f.soil_energy > threshold) | (f.organic > threshold)
+        for idx in np.flatnonzero(mask.ravel()).tolist():
+            self._queue_overflow(idx // f.width, idx % f.width)
+
     def _destroy_cell(self, y: int, x: int) -> int:
         """Уничтожить клетку, рассеяв её энергию и оставив органику."""
         f = self.field
@@ -206,6 +236,7 @@ class Simulation:
                 nx = (x + dx) % f.width
                 f.soil_energy[ny, nx] += energy_part
                 f.organic[ny, nx] += organic_part
+                self._queue_overflow(ny, nx)
 
         f.cell_type[y, x] = config.EMPTY
         f.energy[y, x] = 0.0
@@ -230,26 +261,32 @@ class Simulation:
         Вызывать только при актуальном BFS: ядро использует `dist_seed`.
         """
         f = self.field
-        pruned, self.alive_count = rules.prune_dead_stems(
-            f.cell_type,
-            f.energy,
-            f.organic,
-            f.soil_energy,
-            f.capacity,
-            f.organism_id,
-            f.dist_seed,
-            f.die_at,
-            self.alive_idx,
-            self.alive_pos,
-            self.alive_count,
-            self.stem_degree,
-            self.prune_queue,
-            self.tick_count,
-            config.STEM_PRUNE_GRACE,
-            config.STEM,
-            config.EMPTY,
-            config.DEATH_ORGANIC,
-            config.RESOURCE_RADIUS,
+        pruned, self.alive_count, self.overflow_count = (
+            rules.prune_dead_stems(
+                f.cell_type,
+                f.energy,
+                f.organic,
+                f.soil_energy,
+                f.capacity,
+                f.organism_id,
+                f.dist_seed,
+                f.die_at,
+                self.alive_idx,
+                self.alive_pos,
+                self.alive_count,
+                self.stem_degree,
+                self.prune_queue,
+                self.tick_count,
+                config.STEM_PRUNE_GRACE,
+                self.overflow_idx,
+                self.overflow_seen,
+                self.overflow_count,
+                config.STEM,
+                config.EMPTY,
+                config.DEATH_ORGANIC,
+                config.RESOURCE_RADIUS,
+                config.RESOURCE_TOXIC_THRESHOLD,
+            )
         )
         if pruned:
             self.dirty = True
@@ -326,6 +363,7 @@ class Simulation:
         self.workers_dirty = True
         self.alive_dirty = True
         self.lifetimes_ready = False
+        self.queue_all_overflow()
 
     # ------------------------------------------------ совместимость со старым API
 
@@ -832,6 +870,30 @@ class Simulation:
 
         return config.SEED_ACTION_NONE
 
+    def apply_toxic_seed_deaths(self) -> int:
+        """Убить семена, оказавшиеся в токсичной почве."""
+        self._sync_seeds()
+        if not self.seeds:
+            return 0
+
+        died = 0
+        f = self.field
+        threshold = config.RESOURCE_TOXIC_THRESHOLD
+        for state in list(self.seeds):
+            if not self._seed_valid(state):
+                continue
+            if (
+                f.soil_energy[state.y, state.x] >= threshold
+                or f.organic[state.y, state.x] >= threshold
+            ):
+                self._destroy_cell(state.y, state.x)
+                died += 1
+
+        if died:
+            self._rebuild_seed_index()
+            self.dirty = True
+        return died
+
     def apply_seed_upkeep(self) -> int:
         """Списать энергию за жизнь семян; нехватка энергии убивает семя."""
         self._sync_seeds()
@@ -974,7 +1036,11 @@ class Simulation:
             config.SEED,
         )
 
-        died, self.alive_count = rules.apply_deaths(
+        # Сначала стебли: тогда работник, оставшийся без стебля, умирает
+        # в этом же тике.
+        self.prune_stems()
+
+        died, self.alive_count, self.overflow_count = rules.apply_deaths(
             f.cell_type,
             f.energy,
             f.organic,
@@ -988,12 +1054,17 @@ class Simulation:
             self.alive_pos,
             self.alive_count,
             self.tick_count,
+            self.overflow_idx,
+            self.overflow_seen,
+            self.overflow_count,
             config.GREEN,
             config.ORANGE,
             config.BLUE,
+            config.STEM,
             config.EMPTY,
             config.DEATH_ORGANIC,
             config.RESOURCE_RADIUS,
+            config.RESOURCE_TOXIC_THRESHOLD,
         )
         if died:
             self.dirty = True
@@ -1001,8 +1072,10 @@ class Simulation:
             # работника и добавить уже существующий индекс повторно.
             self.prune_workers()
 
-        # BFS ещё актуален: смерть работников не меняет стебли.
-        self.prune_stems()
+        # Семена в токсичной почве гибнут до своих действий.
+        if self.apply_toxic_seed_deaths():
+            self.rebuild_bfs()
+            self.prune_stems()
 
         if self.seed_actions_enabled:
             # Поддержание жизни семян может убрать источники BFS.
@@ -1012,6 +1085,16 @@ class Simulation:
                 self.rebuild_bfs()
                 self.prune_stems()
             self.seed_step_all()
+
+        # Избыток органики/энергии разливаем из очереди по соседям.
+        self.overflow_count, _ = rules.spread_overflow_queue(
+            f.soil_energy,
+            f.organic,
+            self.overflow_idx,
+            self.overflow_count,
+            self.overflow_seen,
+            config.RESOURCE_OVERFLOW_THRESHOLD,
+        )
 
         self.tick_count += 1
         f.touch()
