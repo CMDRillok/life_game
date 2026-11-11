@@ -38,11 +38,10 @@ def _neighbor(x: int, y: int, direction: int, h: int, w: int) -> tuple[int, int]
 
 
 @njit(cache=True)
-def find_create_target(
+def find_worker_target(
     cell_type: np.ndarray,
     queue: np.ndarray,
     queue_count: int,
-    want_worker: bool,
     green_code: int,
     orange_code: int,
     blue_code: int,
@@ -50,10 +49,10 @@ def find_create_target(
     empty_code: int,
     direction_offset: int,
 ) -> tuple[int, int, int]:
-    """Найти пустую клетку, соседнюю со стеблем организма (4 направления).
+    """Найти пустую клетку для работника рядом со стеблем (4 направления).
 
-    Для работника дополнительно проверяется запрет соседства с другими
-    работниками по 8 направлениям.
+    Дополнительно проверяется запрет соседства с другими работниками по
+    8 направлениям.
 
     Стебли перебираются в обратном порядке BFS: сначала самые дальние от семени,
     чтобы организм рос наружу. Направления обходятся с поворотом на
@@ -75,31 +74,30 @@ def find_create_target(
             if cell_type[ny, nx] != empty_code:
                 continue
 
-            if want_worker:
-                blocked = False
-                for dy in range(-1, 2):
-                    for dx in range(-1, 2):
-                        if dy == 0 and dx == 0:
-                            continue
-                        wy = ny + dy
-                        if wy < 0:
-                            wy = h - 1
-                        elif wy >= h:
-                            wy = 0
-                        wx = nx + dx
-                        if wx < 0:
-                            wx = w - 1
-                        elif wx >= w:
-                            wx = 0
-                        if _is_worker(
-                            cell_type[wy, wx], green_code, orange_code, blue_code
-                        ):
-                            blocked = True
-                            break
-                    if blocked:
+            blocked = False
+            for dy in range(-1, 2):
+                for dx in range(-1, 2):
+                    if dy == 0 and dx == 0:
+                        continue
+                    wy = ny + dy
+                    if wy < 0:
+                        wy = h - 1
+                    elif wy >= h:
+                        wy = 0
+                    wx = nx + dx
+                    if wx < 0:
+                        wx = w - 1
+                    elif wx >= w:
+                        wx = 0
+                    if _is_worker(
+                        cell_type[wy, wx], green_code, orange_code, blue_code
+                    ):
+                        blocked = True
                         break
                 if blocked:
-                    continue
+                    break
+            if blocked:
+                continue
 
             return 1, ny, nx
 

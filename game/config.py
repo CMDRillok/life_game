@@ -41,8 +41,8 @@ RESOURCE_RADIUS = 1  # 3x3
 
 # --- действия семени ---
 SEED_ACTION_MOVE = -1
-SEED_MOVE_COST = 0.0
-STEM_CREATE_COST = 5.0
+# Стебель создаётся только ходом: семя уходит, на старом месте остаётся стебель.
+SEED_MOVE_COST = 5.0
 WORKER_CREATE_COST = 20.0
 # Сколько стеблей организм хочет иметь на одного работника (для default-политики).
 SEED_STEMS_PER_WORKER = 2

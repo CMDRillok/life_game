@@ -137,39 +137,30 @@ class Simulation:
         ]
 
     def seed_create_auto(self, code: int) -> bool:
-        """Создать клетку в первой подходящей пустой клетке рядом со стеблем.
+        """Создать работника в подходящей пустой клетке рядом со стеблем.
 
-        Стоимость списывается с энергии семени. Для работников проверяется
-        запрет соседства с другими работниками по 8 направлениям.
+        Стебли семя напрямую не создаёт: они появляются только при движении.
+        Стоимость списывается с энергии семени. Проверяется запрет соседства
+        работников с другими работниками по 8 направлениям.
         """
-        if code not in (
-            config.STEM,
-            config.GREEN,
-            config.ORANGE,
-            config.BLUE,
-        ):
+        if code not in (config.GREEN, config.ORANGE, config.BLUE):
             raise ValueError(f"семя не может создать клетку кода {code}")
 
         if not self._seed_valid():
             return False
 
         f = self.field
-        cost = (
-            config.STEM_CREATE_COST
-            if code == config.STEM
-            else config.WORKER_CREATE_COST
-        )
+        cost = config.WORKER_CREATE_COST
         if float(f.energy[self.seed_y, self.seed_x]) < cost:
             return False
 
         if self.dirty:
             self.rebuild_bfs()
 
-        found, ty, tx = seed_kernels.find_create_target(
+        found, ty, tx = seed_kernels.find_worker_target(
             f.cell_type,
             self.queue,
             self.bfs_count,
-            code != config.STEM,
             config.GREEN,
             config.ORANGE,
             config.BLUE,
@@ -183,25 +174,25 @@ class Simulation:
         f.energy[self.seed_y, self.seed_x] -= cost
         f.cell_type[ty, tx] = code
         f.energy[ty, tx] = 0.0
-        f.capacity[ty, tx] = (
-            config.STEM_CAPACITY if code == config.STEM else config.WORKER_CAPACITY
-        )
+        f.capacity[ty, tx] = config.WORKER_CAPACITY
         f.organism_id[ty, tx] = self.org_id
         f.dist_seed[ty, tx] = -1
 
-        if code != config.STEM:
-            if self.worker_count < self.worker_idx.size:
-                self.worker_idx[self.worker_count] = ty * f.width + tx
-                self.worker_count += 1
-            else:
-                self.workers_dirty = True
+        if self.worker_count < self.worker_idx.size:
+            self.worker_idx[self.worker_count] = ty * f.width + tx
+            self.worker_count += 1
+        else:
+            self.workers_dirty = True
 
         self.dirty = True
         f.touch()
         return True
 
     def _apply_seed_move(self, ny: int, nx: int) -> bool:
-        """Переместить семя в пустого соседа, оставив на старом месте стебель."""
+        """Переместить семя в пустого соседа, оставив на старом месте стебель.
+
+        Ход оплачивает появившийся стебель (SEED_MOVE_COST).
+        """
         if not self._seed_valid():
             return False
 
@@ -242,27 +233,46 @@ class Simulation:
         nx = (self.seed_x + dx) % f.width
         return self._apply_seed_move(ny, nx)
 
+    def _seed_move_auto(self) -> bool:
+        """Сдвинуть семя в первого пустого 4-соседа, оставив стебель."""
+        f = self.field
+        if float(f.energy[self.seed_y, self.seed_x]) < config.SEED_MOVE_COST:
+            return False
+        found, ny, nx = seed_kernels.find_move_target(
+            f.cell_type,
+            self.seed_y,
+            self.seed_x,
+            config.EMPTY,
+            self.tick_count & 3,
+        )
+        if not found:
+            return False
+        return self._apply_seed_move(ny, nx)
+
     def seed_step(self) -> int:
         """Одно действие семени за тик (default-политика для этапа 4b).
+
+        Стебли создаются только ходом: семя уходит, на старом месте остаётся
+        стебель. Если стеблей не хватает, семя сначала двигается; иначе
+        создаёт работника. При неудаче пробует второе действие.
 
         Возвращает код созданной клетки, SEED_ACTION_MOVE при ходе
         или 0, если действий не было.
         """
         if not self._seed_valid():
             return 0
+        if self.dirty:
+            self.rebuild_bfs()
 
-        f = self.field
-        energy = float(f.energy[self.seed_y, self.seed_x])
         stems = max(0, self.bfs_count - 1)
         workers = self.worker_count
         worker_code = self._worker_code_for_tick()
-
         want_stem = stems < config.SEED_STEMS_PER_WORKER * workers + 3
 
         if want_stem:
-            if self.seed_create_auto(config.STEM):
-                self.last_seed_action = config.STEM
-                return config.STEM
+            if self._seed_move_auto():
+                self.last_seed_action = config.SEED_ACTION_MOVE
+                return config.SEED_ACTION_MOVE
             if self.seed_create_auto(worker_code):
                 self.last_seed_action = worker_code
                 return worker_code
@@ -270,21 +280,7 @@ class Simulation:
             if self.seed_create_auto(worker_code):
                 self.last_seed_action = worker_code
                 return worker_code
-            if self.seed_create_auto(config.STEM):
-                self.last_seed_action = config.STEM
-                return config.STEM
-
-        # Если строить некуда, но энергии хватает хотя бы на стебель,
-        # семя может сдвинуться и оставить за собой стебель.
-        if energy >= config.STEM_CREATE_COST:
-            found, ny, nx = seed_kernels.find_move_target(
-                f.cell_type,
-                self.seed_y,
-                self.seed_x,
-                config.EMPTY,
-                self.tick_count & 3,
-            )
-            if found and self._apply_seed_move(ny, nx):
+            if self._seed_move_auto():
                 self.last_seed_action = config.SEED_ACTION_MOVE
                 return config.SEED_ACTION_MOVE
 
