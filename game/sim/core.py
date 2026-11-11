@@ -85,6 +85,7 @@ class Simulation:
         self.seeds: list[SeedState] = []
         self.seed_idx = np.empty(16, dtype=np.int32)
         self.seed_idx_count = 0
+        self.seed_slots: dict[int, int] = {}
         self.seeds_dirty = True
         self._next_seed_uid = 0
         self.next_org_id = 1
@@ -196,12 +197,19 @@ class Simulation:
         )
 
     def _remove_seed_at(self, y: int, x: int) -> bool:
-        kept = [s for s in self.seeds if not (s.y == y and s.x == x)]
-        if len(kept) == len(self.seeds):
-            return False
-        self.seeds = kept
-        self._rebuild_seed_index()
-        return True
+        w = self.field.width
+        for i, state in enumerate(self.seeds):
+            if state.y == y and state.x == x:
+                last = self.seeds[-1]
+                self.seeds[i] = last
+                self.seeds.pop()
+                self.seed_slots.pop(state.uid, None)
+                if i < len(self.seeds):
+                    self.seed_slots[last.uid] = i
+                    self.seed_idx[i] = last.y * w + last.x
+                self.seed_idx_count = len(self.seeds)
+                return True
+        return False
 
     def _queue_overflow(self, y: int, x: int) -> None:
         """Поставить ячейку в очередь на проверку избытка ресурса."""
@@ -318,14 +326,37 @@ class Simulation:
         return org_id
 
     def _rebuild_seed_index(self) -> None:
-        """Пересобрать плоские индексы семян из списка состояний."""
+        """Пересобрать плоские индексы семян и слоты из списка состояний."""
         count = len(self.seeds)
         if self.seed_idx.size < count:
             self.seed_idx = np.empty(max(16, count), dtype=np.int32)
         w = self.field.width
+        self.seed_slots = {}
         for i, state in enumerate(self.seeds):
             self.seed_idx[i] = state.y * w + state.x
+            self.seed_slots[state.uid] = i
         self.seed_idx_count = count
+
+    def _update_seed_position(self, state: SeedState) -> None:
+        """Обновить один слот после хода семени без полной пересборки."""
+        slot = self.seed_slots.get(state.uid)
+        if slot is None:
+            self._rebuild_seed_index()
+            return
+        self.seed_idx[slot] = state.y * self.field.width + state.x
+
+    def _append_seed_state(self, state: SeedState) -> None:
+        """Добавить семя и его слот без пересборки всего индекса."""
+        slot = len(self.seeds)
+        if slot >= self.seed_idx.size:
+            new_size = max(16, (slot + 1) * 2)
+            old = self.seed_idx
+            self.seed_idx = np.empty(new_size, dtype=np.int32)
+            self.seed_idx[: old.size] = old
+        self.seeds.append(state)
+        self.seed_slots[state.uid] = slot
+        self.seed_idx[slot] = state.y * self.field.width + state.x
+        self.seed_idx_count = slot + 1
 
     def refresh_seeds(self) -> None:
         """Синхронизировать список семян с полем.
@@ -609,7 +640,7 @@ class Simulation:
         self._alive_append(ny * f.width + nx)
 
         state.y, state.x = ny, nx
-        self._rebuild_seed_index()
+        self._update_seed_position(state)
         self._org_stat(state.org_id)[1] += 1
         self.dirty = True
         f.touch()
@@ -699,8 +730,7 @@ class Simulation:
             genome=genome.mutated(self.rng),
             generation=state.generation + 1,
         )
-        self.seeds.append(child)
-        self._rebuild_seed_index()
+        self._append_seed_state(child)
         counts[0] += 1
         state.last_duplicate_tick = self.tick_count
         self.dirty = True
@@ -768,8 +798,7 @@ class Simulation:
             travel_steps=0,
             travel_limit=max(1, int(genome.shoot_range)),
         )
-        self.seeds.append(child)
-        self._rebuild_seed_index()
+        self._append_seed_state(child)
         self._org_counts[org_id] = [1, 0, 0]
         state.last_shoot_tick = self.tick_count
         self.dirty = True
@@ -818,7 +847,7 @@ class Simulation:
 
         state.y, state.x = ny, nx
         state.travel_steps += 1
-        self._rebuild_seed_index()
+        self._update_seed_position(state)
         self.dirty = True
         f.touch()
         return config.SEED_ACTION_TRAVEL
@@ -903,7 +932,6 @@ class Simulation:
                 died += 1
 
         if died:
-            self._rebuild_seed_index()
             self.dirty = True
         return died
 
@@ -913,11 +941,11 @@ class Simulation:
         if not self.seeds:
             return 0
 
-        changed = False
         alive_states = [s for s in self.seeds if self._seed_valid(s)]
         if len(alive_states) != len(self.seeds):
+            # Редкий случай внешней рассинхронизации: пересобираем индексы.
             self.seeds = alive_states
-            changed = True
+            self._rebuild_seed_index()
 
         died = 0
         f = self.field
@@ -926,12 +954,10 @@ class Simulation:
             if energy <= config.SEED_UPKEEP:
                 self._destroy_cell(state.y, state.x)
                 died += 1
-                changed = True
             else:
                 f.energy[state.y, state.x] = energy - config.SEED_UPKEEP
 
-        if changed:
-            self._rebuild_seed_index()
+        if died:
             self.dirty = True
         return died
 

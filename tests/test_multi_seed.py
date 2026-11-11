@@ -255,6 +255,15 @@ class GenomeTests(unittest.TestCase):
         clone.shoot_threshold = 123.0
         self.assertNotEqual(genome.shoot_threshold, clone.shoot_threshold)
 
+    def test_reproduction_defaults_are_frequent_and_gentle(self) -> None:
+        genome = Genome()
+        self.assertEqual(genome.shoot_threshold, 280.0)
+        self.assertEqual(genome.duplicate_threshold, 180.0)
+        self.assertAlmostEqual(genome.mutation_rate, 0.04, places=5)
+        self.assertAlmostEqual(genome.mutation_scale, 0.05, places=5)
+        self.assertEqual(config.SEED_SHOOT_COOLDOWN, 30)
+        self.assertEqual(config.SEED_DUPLICATE_COOLDOWN, 45)
+
     def test_random_genome_stays_within_bounds_and_varies(self) -> None:
         rng = np.random.default_rng(7)
         genomes = [Genome.random(rng) for _ in range(20)]

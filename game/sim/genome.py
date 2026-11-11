@@ -21,18 +21,19 @@ class Genome:
 
     stems_per_worker: float = 2.0
     stem_slack: float = 3.0
-    shoot_threshold: float = 600.0
+    shoot_threshold: float = 280.0
     # Максимальное число клеток, которое пролетает семя после отстрела.
     shoot_range: int = 20
     child_energy: float = 100.0
-    duplicate_threshold: float = 400.0
+    duplicate_threshold: float = 180.0
     duplicate_energy: float = 60.0
     green_weight: float = 1.0
     orange_weight: float = 1.0
     blue_weight: float = 1.0
     move_bias: float = 0.15
-    mutation_rate: float = 0.10
-    mutation_scale: float = 0.15
+    # Мутации при размножении слабые: реже и с меньшим шагом.
+    mutation_rate: float = 0.04
+    mutation_scale: float = 0.05
 
     def __post_init__(self) -> None:
         values = asdict(self)
@@ -68,6 +69,9 @@ class Genome:
         values["green_weight"] = 1.0
         values["orange_weight"] = 1.0
         values["blue_weight"] = 1.0
+        # Мутационные гены тоже не разгоняем на старте.
+        values["mutation_rate"] = 0.04
+        values["mutation_scale"] = 0.05
         return cls(**values)
 
     def mutated(self, rng: np.random.Generator) -> "Genome":

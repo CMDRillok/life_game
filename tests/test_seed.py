@@ -168,6 +168,7 @@ class SeedMoveTests(unittest.TestCase):
 
         sim = Simulation(field)
         sim.seeds[0].genome.move_bias = 0.0
+        sim.seeds[0].genome.duplicate_threshold = 10_000.0
         action = sim.seed_step()
 
         # Трёх стеблей при нуле работников достаточно: семя стоит на месте,
@@ -223,6 +224,7 @@ class SeedMoveTests(unittest.TestCase):
         put_worker(field, 5, 7, config.GREEN)
 
         sim = Simulation(field)
+        sim.seeds[0].genome.duplicate_threshold = 10_000.0
         filled_before = int((field.cell_type != config.EMPTY).sum())
         sim.tick()
         filled_after_one = int((field.cell_type != config.EMPTY).sum())

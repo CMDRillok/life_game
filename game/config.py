@@ -94,8 +94,8 @@ SHOOT_EXTRA_COST = 10.0
 DUPLICATE_EXTRA_COST = 10.0
 MAX_SEEDS_PER_ORGANISM = 4
 # Пауза после размножения, чтобы популяция не взрывалась за десятки тиков.
-SEED_SHOOT_COOLDOWN = 60
-SEED_DUPLICATE_COOLDOWN = 90
+SEED_SHOOT_COOLDOWN = 30
+SEED_DUPLICATE_COOLDOWN = 45
 # Предохранитель для длинных headless-прогонов: после лимита семена
 # перестают размножаться, но продолжают расти и искать энергию.
 MAX_TOTAL_SEEDS = 2000
