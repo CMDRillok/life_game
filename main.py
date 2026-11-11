@@ -7,6 +7,7 @@ Headless — прогон заданного числа тиков без окн
 from __future__ import annotations
 
 import argparse
+import secrets
 import time
 
 import pygame
@@ -71,11 +72,13 @@ def create_field(args: argparse.Namespace) -> Field:
         print(f"загружено: {field}")
     else:
         field = Field(args.width, args.height)
+        world_seed = secrets.randbits(64)
         if args.empty:
             print("пустое поле")
         elif args.demo:
             seed_demo(
                 field,
+                seed=world_seed,
                 organisms=max(1, args.organisms),
                 seeds_per_org=max(1, args.seeds_per_org),
             )
@@ -85,7 +88,7 @@ def create_field(args: argparse.Namespace) -> Field:
                 f"семян на организм {max(1, args.seeds_per_org)}"
             )
         else:
-            placed = seed_start(field)
+            placed = seed_start(field, seed=world_seed)
             print(
                 "стартовый мир: "
                 f"семян {placed}, "
@@ -117,7 +120,7 @@ def run_headless(field: Field, args: argparse.Namespace) -> None:
     print(field)
     print(f"память слоёв: {field.memory_bytes() / (1024 * 1024):.1f} MiB")
 
-    sim = Simulation(field)
+    sim = Simulation(field, random_genomes=True)
     ticks = max(0, args.ticks)
     if ticks:
         # Первый тик прогревает numba и не входит в замер.
@@ -176,7 +179,7 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
     camera = Camera()
     camera.fit(field, *screen.get_size())
 
-    sim = Simulation(field)
+    sim = Simulation(field, random_genomes=True)
     print("прогрев numba (без изменения мира)...")
     warmup_numba()
 
@@ -247,8 +250,12 @@ def run_interactive(field: Field, args: argparse.Namespace) -> None:
                     event.scancode == pygame.KSCAN_R
                     or event.key == pygame.K_r
                 ):
-                    field = create_field(args)
-                    sim = Simulation(field)
+                    # R всегда начинает новый мир, а не перезагружает старый
+                    # чекпоинт: нужны новое расположение и новые геномы.
+                    restart_args = argparse.Namespace(**vars(args))
+                    restart_args.load = None
+                    field = create_field(restart_args)
+                    sim = Simulation(field, random_genomes=True)
                     renderer.invalidate()
                     camera.fit(field, *screen.get_size())
                     accumulator = 0.0

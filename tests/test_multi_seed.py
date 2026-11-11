@@ -255,6 +255,33 @@ class GenomeTests(unittest.TestCase):
         clone.shoot_threshold = 123.0
         self.assertNotEqual(genome.shoot_threshold, clone.shoot_threshold)
 
+    def test_random_genome_stays_within_bounds_and_varies(self) -> None:
+        rng = np.random.default_rng(7)
+        genomes = [Genome.random(rng) for _ in range(20)]
+        for genome in genomes:
+            for name, (low, high) in GENOME_BOUNDS.items():
+                value = float(getattr(genome, name))
+                self.assertGreaterEqual(value, low)
+                self.assertLessEqual(value, high)
+        self.assertGreater(
+            len({genome.shoot_threshold for genome in genomes}), 1
+        )
+
+
+class RandomStartTests(unittest.TestCase):
+    def test_random_genomes_for_new_seeds(self) -> None:
+        field = make_field(20, 20)
+        put_seed(field, 2, 2, energy=100.0, org=1)
+        put_seed(field, 15, 15, energy=100.0, org=2)
+
+        sim = Simulation(field, rng_seed=9, random_genomes=True)
+
+        default = Genome()
+        genomes = [state.genome for state in sim.seeds]
+        self.assertEqual(len(genomes), 2)
+        self.assertNotEqual(genomes[0].as_dict(), default.as_dict())
+        self.assertNotEqual(genomes[0].as_dict(), genomes[1].as_dict())
+
 
 class StatsTests(unittest.TestCase):
     def test_stats_report_seeds_organisms_and_generation(self) -> None:

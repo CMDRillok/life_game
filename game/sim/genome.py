@@ -46,6 +46,30 @@ class Genome:
     def clone(self) -> "Genome":
         return replace(self)
 
+    @classmethod
+    def random(
+        cls, rng: np.random.Generator, spread: float = 0.35
+    ) -> "Genome":
+        """Случайный, но жизнеспособный геном вокруг стартовых значений.
+
+        Каждый ген получает равномерное смещение в пределах `spread` от
+        полного диапазона и зажимается в границы. Так новый запуск получает
+        другой набор параметров, но не экстремальные комбинации, при которых
+        одиночное семя не успевает построить организм.
+        """
+        values = asdict(cls())
+        for name, (low, high) in GENOME_BOUNDS.items():
+            span = (high - low) * spread
+            value = float(values[name]) + float(rng.uniform(-span, span))
+            values[name] = min(high, max(low, value))
+        # В пустой стартовой почве оранжевые/синие работники не находят еды.
+        # Держим веса равными, чтобы семя не строило только нежизнеспособный
+        # тип и могло пережить первый этап.
+        values["green_weight"] = 1.0
+        values["orange_weight"] = 1.0
+        values["blue_weight"] = 1.0
+        return cls(**values)
+
     def mutated(self, rng: np.random.Generator) -> "Genome":
         """Вернуть мутировавшую копию.
 

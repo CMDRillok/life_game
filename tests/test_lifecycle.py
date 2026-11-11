@@ -463,6 +463,20 @@ class StartWorldTests(unittest.TestCase):
         for y, x in seeds:
             self.assertAlmostEqual(float(field.energy[y, x]), 77.0, places=5)
 
+    def test_different_world_seeds_scatter_seeds_differently(self) -> None:
+        first = make_field(60, 40)
+        second = make_field(60, 40)
+        seed_start(first, seed=11, count=25, energy=100.0)
+        seed_start(second, seed=12, count=25, energy=100.0)
+
+        first_positions = {
+            (int(y), int(x)) for y, x in np.argwhere(first.cell_type == config.SEED)
+        }
+        second_positions = {
+            (int(y), int(x)) for y, x in np.argwhere(second.cell_type == config.SEED)
+        }
+        self.assertNotEqual(first_positions, second_positions)
+
     def test_simulation_starts_paused_by_default(self) -> None:
         self.assertTrue(config.START_PAUSED)
 

@@ -48,9 +48,11 @@ class Simulation:
         field: Field,
         seed_actions: bool = True,
         rng_seed: int | None = None,
+        random_genomes: bool = False,
     ) -> None:
         self.field = field
         self.seed_actions_enabled = seed_actions
+        self.random_initial_genomes = random_genomes
         self.tick_count = 0
         self.dirty = True
         self.bfs_count = 0
@@ -330,7 +332,8 @@ class Simulation:
 
         Существующие состояния ищутся по позиции и организму, поэтому genomes
         и поколения не теряются. Для новых клеток-семян создаётся стартовый
-        геном. Полный скан поля выполняется только при внешних изменениях.
+        или случайный геном. Полный скан поля выполняется только при внешних
+        изменениях.
         """
         f = self.field
         ys, xs = np.nonzero(f.cell_type == config.SEED)
@@ -345,7 +348,13 @@ class Simulation:
                     y=y,
                     x=x,
                     org_id=org_id,
-                    genome=Genome(),
+                    genome=(
+                        Genome.random(
+                            self.rng, spread=config.START_GENOME_SPREAD
+                        )
+                        if self.random_initial_genomes
+                        else Genome()
+                    ),
                     generation=0,
                 )
             seeds.append(state)
